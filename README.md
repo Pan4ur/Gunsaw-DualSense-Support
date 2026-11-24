@@ -76,7 +76,7 @@ Touchpad:
 - △ - Space
 - □ - Backspace
 
-* - [MP mod](https://github.com/Pan4ur/Gunsaw-Multiplayer-Mod) Features
+\* - [MP mod](https://github.com/Pan4ur/Gunsaw-Multiplayer-Mod) Features
 
 ## Installation
 
