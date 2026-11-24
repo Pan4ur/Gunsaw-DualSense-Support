@@ -94,9 +94,10 @@ public sealed class Plugin : BaseUnityPlugin
         usable = connected && (emulator != null || Application.isFocused);
         if (!usable) pad = default;
         var player = PlayerScript.player;
+        var body = player != null ? player.bodyScript : null;
         (pad.MoveX, pad.MoveY) = Sticks.Movement(pad.LX, pad.LY, leftDeadZone.Value / 100f);
         if (pad.R2 < Trigger.ButtonThreshold) swapTriggerHeld = false;
-        pad.Firing = !swapTriggerHeld && Trigger.FireHeld(pad.R2, previous.Firing, Effects.HasFireWeapon(player != null ? player.bodyScript : null));
+        pad.Firing = !swapTriggerHeld && Trigger.FireHeld(pad.R2, previous.Firing, Effects.HasFireWeapon(body));
         if (!wasConnected) previous = pad;
 
         var manager = GameManager.main;
@@ -120,6 +121,11 @@ public sealed class Plugin : BaseUnityPlugin
             aimActive = true;
             direction = right.normalized * aimScale;
         }
+
+        pad.Carry = pad.Has(Button.Square) && (previous.Has(Button.Square) ? previous.Carry :
+            play && MultiplayerSession.IsActive && body != null && body.isAlive && !PlayerCarrySystem.IsLocalTarget &&
+            (PlayerCarrySystem.IsLocalCarrier || PlayerCarrySystem.FindCarryTarget(body) != 0));
+        pad.Stun = play && body != null && PropHuntSystem.AbilitiesVisible && PropHuntSystem.IsProp(body);
         
         if (usable && chatOpen && !wasChatOpen)
         {
@@ -212,11 +218,15 @@ public sealed class Plugin : BaseUnityPlugin
 
     internal void AddPauseControllerSettings(GameManager owner)
     {
-        if (owner.musicVolSlider != null && owner.pauseMenuText != null)
-            AddPercentSlider(owner.musicVolSlider, owner.pauseMenuText, "Controller speaker", speakerVolume, -32);
+        if (owner.musicVolSlider == null) return;
+        var musicLabel = owner.musicVolSlider.transform.parent.Find("Volume (2)")?.GetComponent<TMPro.TMP_Text>();
+        var template = musicLabel != null ? musicLabel : owner.pauseMenuText;
+        if (template != null)
+            AddPercentSlider(owner.musicVolSlider, template, "Controller", speakerVolume, -32, useTemplateFontSize: musicLabel != null);
     }
 
-    private static void AddPercentSlider(UnityEngine.UI.Slider source, TMPro.TMP_Text template, string title, ConfigEntry<int> setting, float offset)
+    private static void AddPercentSlider(UnityEngine.UI.Slider source, TMPro.TMP_Text template, string title, ConfigEntry<int> setting, float offset,
+        bool useTemplateFontSize = false)
     {
         var parent = source.transform.parent;
         var slider = Instantiate(source, parent, false);
@@ -239,14 +249,17 @@ public sealed class Plugin : BaseUnityPlugin
         labelRect.anchoredPosition = rect.anchoredPosition + new Vector2(-245, 0);
         labelRect.sizeDelta = new Vector2(240, 30);
         label.alignment = TMPro.TextAlignmentOptions.Right;
-        label.enableAutoSizing = true;
-        label.fontSizeMin = 12;
-        label.fontSizeMax = 20;
-        label.text = $"{title}  {setting.Value}%";
+        if (!useTemplateFontSize)
+        {
+            label.enableAutoSizing = true;
+            label.fontSizeMin = 12;
+            label.fontSizeMax = 20;
+        }
+        label.text = $"{title}";
         slider.onValueChanged.AddListener(value =>
         {
             setting.Value = (int)value;
-            label.text = $"{title}  {setting.Value}%";
+            label.text = $"{title}";
         });
     }
 
@@ -257,6 +270,8 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     internal bool FirePressed() => play && !swapTriggerHeld && pad.R2 >= Trigger.ButtonThreshold && previous.R2 < Trigger.ButtonThreshold;
+
+    internal bool StunPressed() => pad.Stun && Pressed(Button.R1);
 
     internal bool SwapPressed()
     {
@@ -281,9 +296,12 @@ public sealed class Plugin : BaseUnityPlugin
         
         if (!play || held)
             return false;
+
+        if (target == typeof(PlayerCarrySystem) || target == typeof(PlayerCarryPair))
+            return key == KeyCode.C && pad.Carry && Pressed(Button.Square);
         
         if (target == typeof(ArsenalRuntime))
-            return key == KeyCode.B && Pressed(Button.Square) && PlayerScript.player.bodyScript != null && !PlayerScript.player.bodyScript.inVehicle;
+            return key == KeyCode.B && !pad.Carry && Pressed(Button.Square) && PlayerScript.player.bodyScript != null && !PlayerScript.player.bodyScript.inVehicle;
        
         if (!Pressed(Button.R3)) 
             return false;
@@ -307,9 +325,9 @@ public sealed class Plugin : BaseUnityPlugin
             (key == keys["Walk"] && walking) ||
             (key == keys["Jump"] && state.Has(Button.L1)) ||
             (key == keys["Ragdoll"] && state.Has(Button.Cross)) ||
-            (key == keys["Kick"] && state.Has(Button.R1)) ||
+            (key == keys["Kick"] && state.Has(Button.R1) && !state.Stun) ||
             (key == keys["Use"] && state.Has(Button.Triangle)) ||
-            (key == keys["EnterVehicle"] && state.Has(Button.Square) && ((player.bodyScript != null && player.bodyScript.inVehicle) || !ArsenalMenu.ConsumesWhineKey(KeyCode.B))) ||
+            (key == keys["EnterVehicle"] && state.Has(Button.Square) && !state.Carry && ((player.bodyScript != null && player.bodyScript.inVehicle) || !ArsenalMenu.ConsumesWhineKey(KeyCode.B))) ||
             (key == keys["Fire"] && state.Firing) ||
             (key == keys["Levitate"] && state.L2 >= Trigger.ButtonThreshold) ||
             (key == keys["Unarmed"] && state.Has(Button.Up)) ||

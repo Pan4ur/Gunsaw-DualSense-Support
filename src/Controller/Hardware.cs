@@ -24,6 +24,7 @@ internal sealed class Hardware : IDisposable
     private (int Force, int Hertz, bool Detent)? lastRight;
     private bool shotRumbleActive;
     private float nextFeedback;
+    private int rumbleStopRepeats;
     private bool rumbleErrorLogged;
     private bool improvedRumble;
     private (byte Low, byte High) lastRumble;
@@ -125,8 +126,9 @@ internal sealed class Hardware : IDisposable
             if (!hasUsbRoute) routed = false;
             var routeSpeaker = hasUsbRoute && !routed;
             var rumble = HidReport.EncodeRumble(effects.Low, effects.High);
-            var sendRumble = rumble != lastRumble && (now >= nextFeedback || leftChanged || rightChanged ||
-                shotThisFrame || shotRumbleActive != effects.ShotRumble || rumble == default);
+            var repeatStop = rumble == default && rumbleStopRepeats > 0 && now >= nextFeedback;
+            var sendRumble = repeatStop || (rumble != lastRumble && (now >= nextFeedback || leftChanged || rightChanged ||
+                shotThisFrame || shotRumbleActive != effects.ShotRumble || rumble == default));
 
             shotRumbleActive = effects.ShotRumble;
             if (sendRumble) nextFeedback = now + FeedbackInterval;
@@ -181,10 +183,16 @@ internal sealed class Hardware : IDisposable
         {
             lastLeft = left ?? lastLeft;
             lastRight = right ?? lastRight;
-            if (rumble.HasValue) lastRumble = rumble.Value;
+            if (rumble.HasValue)
+            {
+                if (rumble.Value != default) rumbleStopRepeats = 0;
+                else if (lastRumble != default) rumbleStopRepeats = 2;
+                else if (rumbleStopRepeats > 0) rumbleStopRepeats--;
+                lastRumble = rumble.Value;
+            }
             routed |= usbSpeaker;
         }
-        else if (!rumbleErrorLogged && motors.HasValue && motors.Value != default)
+        else if (!rumbleErrorLogged && motors.HasValue)
         {
             rumbleErrorLogged = true;
             log($"DualSense rumble report failed: {Sdl.Error}");
@@ -251,6 +259,7 @@ internal sealed class Hardware : IDisposable
         rightDetent = false;
         shotRumbleActive = false;
         nextFeedback = 0;
+        rumbleStopRepeats = 0;
         rumbleErrorLogged = false;
         lastRumble = default;
         lightbar = null;

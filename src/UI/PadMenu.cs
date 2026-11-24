@@ -54,6 +54,10 @@ internal sealed class PadMenu(PadKeyboard keyboard)
         if (root == null)
         {
             Reset();
+            var editor = LevelEditor.main;
+            if (pressed(Button.Circle) && editor != null && editor.gameObject.scene == SceneManager.GetActiveScene() &&
+                !editor.fadingOut && !Controls.IsTextInputSelected)
+                editor.BackToMenu();
             return;
         }
         if (root != scope)

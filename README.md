@@ -14,7 +14,7 @@
 - Right stick - Aim
 
 - L1 - Jump
-- R1 - Kick
+- R1 - Kick / Stun hunter as a prop*
 
 - L2 - Telekinezis
 - R2 - Fire / Swap body
@@ -24,7 +24,7 @@
 
 - × - Ragdoll / Space
 - ○ - Lctrl / Back
-- □ - Enter(Exit) vehicle / Arsenal
+- □ - Enter(Exit) vehicle / Arsenal / Carry the player you are aiming at*
 - △ - Interact
 
 - ↑ - Unarmed (H)

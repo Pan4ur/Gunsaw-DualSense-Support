@@ -39,6 +39,20 @@ internal static class PlayerPromptPatch
     }
 }
 
+[HarmonyPatch(typeof(MultiplayerHudUi), nameof(MultiplayerHudUi.Configure))]
+internal static class CarryHintPatch
+{
+    private static void Postfix(MultiplayerHudUi __instance)
+    {
+        var label = __instance.activationText;
+        if (label == null || !label.gameObject.activeInHierarchy || Plugin.Instance?.ControllerActive != true) return;
+        var text = label.text;
+        if (text is not ("Press C to carry player" or "Press C to stop carrying player")) return;
+        label.spriteAsset = MenuPromptSprites.Asset;
+        label.text = "Press " + MenuPromptSprites.Hint(Button.Square) + text.Substring("Press C".Length);
+    }
+}
+
 [HarmonyPatch(typeof(StationRuntime), nameof(StationRuntime.LateUpdate))]
 internal static class StationPromptPatch
 {

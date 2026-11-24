@@ -10,6 +10,7 @@ internal sealed class Effects
     private float lastHealth, hitAt = -10, shotAt = -10, heartAt = -10;
     private float hit, autoInterval;
     private RecoilPulse shot;
+    private bool stopShotRumbleOnRelease, shotRumbleCanceled;
     private AudioClip? locator;
     private int locatorCount;
     private WeaponPreset? cachedWeapon;
@@ -39,8 +40,11 @@ internal sealed class Effects
         float damage = rocket != null ? rocket.damage : grenade != null ? grenade.damage : weapon.damage;
         var interval = autoInterval > 0 ? autoInterval : nominal;
         shot = new RecoilPulse(damage, weapon.bulletAmount, weapon.slot == 0, launcher, rocket != null, interval, weapon.fullAuto);
+        stopShotRumbleOnRelease = held && shot.ShortRumble;
+        shotRumbleCanceled = false;
         shotAt = now;
         ShotFrame = Time.frameCount;
+        if (held) detentArmed = false;
         var canContinue = source.ammo > 0 && !source.isReloading;
         var (force, hertz) = shot.TriggerAt(0, held, canContinue);
         var (low, high) = shot.At(0);
@@ -66,8 +70,9 @@ internal sealed class Effects
         float triggerTravel)
     {
         bool hasFireWeapon = enabled && HasFireWeapon(body);
-        detentArmed = !hasFireWeapon || Trigger.ArmFireDetent(detentArmed, triggerTravel);
+        detentArmed = !hasFireWeapon || Trigger.ArmFireDetent(detentArmed, triggerTravel, triggerHeld);
         if (!enabled || !triggerHeld) autoInterval = 0;
+        if (stopShotRumbleOnRelease && !triggerHeld) shotRumbleCanceled = true;
         var output = new Feedback { Left = 1, Locators = locatorCount };
         AudioSource? engineSource = null;
         if (body != null && enabled)
@@ -89,8 +94,9 @@ internal sealed class Effects
             float shotElapsed = now - shotAt;
             var weapon = body.weapon;
             bool canContinue = weapon != null && weapon == shotWeapon && weapon.ammo > 0 && !weapon.isReloading;
-            var kick = shot.At(shotElapsed, hasFireWeapon && triggerHeld && canContinue);
+            var kick = shotRumbleCanceled ? default : shot.At(shotElapsed, hasFireWeapon && triggerHeld && canContinue);
             output.ShotRumble = kick != default;
+            bool kart = false;
             if (body.isAlive)
             {
                 var hp = body.health / Mathf.Max(1, body.maxHealth);
@@ -116,22 +122,30 @@ internal sealed class Effects
                     }
                 }
 
-                var vehicle = body.curVehicle;
-                if (vehicle != null && !vehicle.engineDisabled && vehicle.engineSound != null && vehicle.mainPart != null && vehicle.mainPart.rb != null)
+                var vehicle = body.inVehicle ? body.curVehicle : null;
+                if (vehicle != null && !vehicle.engineDisabled && vehicle.health > 0 && vehicle.engineSound != null &&
+                    vehicle.mainPart != null && vehicle.mainPart.rb != null)
                 {
-                    var speed = vehicle.mainPart.rb.velocity.magnitude;
-                    if (speed > 0.3f && vehicle.engineSound.isPlaying)
+                    kart = vehicle.vehicleName?.IndexOf("kart", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                           vehicle.vehicleName?.IndexOf("golf", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                           SceneManager.GetActiveScene().name.IndexOf("golf", StringComparison.OrdinalIgnoreCase) >= 0;
+                    var rb = vehicle.mainPart.rb;
+                    var velocity = rb.velocity;
+                    var world = WorldReplication.Instance;
+                    if (kart && MultiplayerSession.IsConnected && !MultiplayerSession.IsHost && world != null &&
+                        world.bodies.renderedVelocities.TryGetValue(rb, out var renderedVelocity))
+                        velocity = renderedVelocity;
+                    var speed = velocity.magnitude;
+                    if (kart || (speed > 0.3f && vehicle.engineSound.isPlaying))
                     {
                         engineSource = vehicle.engineSound;
-                        output.Engine = Mathf.Clamp01(speed / 10f) * Mathf.Clamp01(engineSource.volume);
+                        var moving = Mathf.Clamp01(speed / 10f) * Mathf.Clamp01(engineSource.volume);
+                        output.Engine = kart ? Mathf.Lerp(0.15f, 1, moving) : moving;
                     }
                 }
             }
 
-            var golf = body.curVehicle != null && (body.curVehicle.vehicleName?.IndexOf("kart", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                                   body.curVehicle.vehicleName?.IndexOf("golf", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                                   SceneManager.GetActiveScene().name.IndexOf("golf", StringComparison.OrdinalIgnoreCase) >= 0);
-            var motor = motorRumble.Update(golf ? output.Engine * 0.4f : 0, now,
+            var motor = motorRumble.Update(kart ? output.Engine * 0.4f : 0, now,
                 speaker?.HasBluetoothRoute == true && speakerGain > 0);
             output.Low = Mathf.Max(Mathf.Max(impact, kick.Low), Mathf.Max(motor, output.Heart ? 0.34f : 0));
             output.High = Mathf.Max(impact * 0.55f, kick.High);

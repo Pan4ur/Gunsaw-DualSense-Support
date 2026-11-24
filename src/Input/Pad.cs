@@ -10,7 +10,7 @@ internal struct Pad
 {
     internal int Buttons;
     internal float LX, LY, RX, RY, L2, R2, TouchX, TouchY, MoveX, MoveY;
-    internal bool Touching, Firing;
+    internal bool Touching, Firing, Carry, Stun;
 
     internal bool Has(Button button) => (Buttons & (1 << (int)button)) != 0;
 

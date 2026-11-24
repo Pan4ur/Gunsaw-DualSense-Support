@@ -64,7 +64,7 @@ internal static class MenuPromptSprites
     {
         const int size = 64;
         Button[] buttons = { Button.Circle, Button.Square, Button.Triangle, Button.Cross, Button.Right };
-        var texture = PromptTextures.Load("Menu", FilterMode.Bilinear);
+        var texture = PromptTextures.Load("Menu", FilterMode.Point);
         var sprites = new List<TMP_Sprite>();
         for (int i = 0; i < buttons.Length; i++)
         {

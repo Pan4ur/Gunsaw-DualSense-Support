@@ -34,6 +34,8 @@ internal static class InputPatch
         yield return AccessTools.Method(typeof(ArsenalRuntime), nameof(ArsenalRuntime.Update));
         yield return AccessTools.Method(typeof(BlackoutRule), nameof(BlackoutRule.HandleInput));
         yield return AccessTools.Method(typeof(PlayerCarrySystem), nameof(PlayerCarrySystem.FindCarryTarget));
+        yield return AccessTools.Method(typeof(PlayerCarrySystem), nameof(PlayerCarrySystem.Tick));
+        yield return AccessTools.Method(typeof(PlayerCarryPair), nameof(PlayerCarryPair.Tick));
         yield return AccessTools.Method(typeof(PropHuntSystem), nameof(PropHuntSystem.StunTarget));
         yield return AccessTools.Method(typeof(PropHuntSystem), nameof(PropHuntSystem.Tick));
         yield return AccessTools.Method(typeof(PropHuntDisguise), nameof(PropHuntDisguise.PrepareInput));
@@ -68,7 +70,7 @@ internal static class InputPatch
                     code.operand = AccessTools.Method(typeof(InputPatch), nameof(Pointer));
             }
             if (code.Calls(MouseDown) && (swap || target == typeof(PropHuntSystem)))
-                code.operand = AccessTools.Method(typeof(InputPatch), swap ? nameof(SwapMouseDown) : nameof(FireMouseDown));
+                code.operand = AccessTools.Method(typeof(InputPatch), swap ? nameof(SwapMouseDown) : nameof(StunMouseDown));
             if (code.Calls(Axis) && player)
                 code.operand = AccessTools.Method(typeof(InputPatch), nameof(ReadAxis));
 
@@ -109,10 +111,10 @@ internal static class InputPatch
         return (button == 0 && Plugin.Instance?.SwapPressed() == true) || Input.GetMouseButtonDown(button);
     }
 
-    public static bool FireMouseDown(int button)
+    public static bool StunMouseDown(int button)
     {
         Plugin.Instance?.Sample();
-        return Input.GetMouseButtonDown(button) || (button == 0 && Plugin.Instance?.FirePressed() == true);
+        return Input.GetMouseButtonDown(button) || (button == 0 && Plugin.Instance?.StunPressed() == true);
     }
 
     public static float ReadAxis(string axis) => axis == "Vertical" && Plugin.Instance != null ? Plugin.Instance.Vertical() : Input.GetAxisRaw(axis);
@@ -249,11 +251,17 @@ internal static class StartLevelPromptPatch
 }
 
 [HarmonyPatch(typeof(PropHuntHud), nameof(PropHuntHud.SetPerk))]
-internal static class LocatorHintPatch
+internal static class PropHuntHintPatch
 {
     private static void Prefix(ref string label)
     {
-        if (label == "[J] Locator" && Plugin.Instance?.ControllerActive == true) label = "[R3] Locator";
+        if (Plugin.Instance?.ControllerActive != true) return;
+        label = label switch
+        {
+            "[J] Locator" => "[R3] Locator",
+            "[LMB] STUN HUNTER" => "[R1] STUN HUNTER",
+            _ => label
+        };
     }
 }
 

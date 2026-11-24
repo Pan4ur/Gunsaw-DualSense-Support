@@ -2,15 +2,14 @@ namespace GunsawDualSenseSupport;
 
 internal static class Trigger
 {
-    internal const int FirePercent = 50;
+    internal const int FirePercent = 20;
     internal const float ButtonThreshold = 0.16f;
-    private const float FireThreshold = FirePercent / 100f, FireRelease = 0.28f, DetentReset = 0.18f;
-    private const int ZoneCount = 10, KickZone = 4, StrengthBits = 3;
+    private const float FireThreshold = FirePercent / 100f, FireRelease = 0.1f, DetentReset = 0.18f;
+    private const int ZoneCount = 10, KickZone = FirePercent * ZoneCount / 100, StrengthBits = 3;
+    private const int VibrationZone = (int)(FireRelease * ZoneCount);
     private const int ZonesLow = 1, ZonesHigh = 2, Strengths = 3, Frequency = 9;
-    private const int DetentStart = 1, DetentEnd = 2, DetentStrength = 3;
-    private const int DetentWidthPercent = 10;
-    private const byte SoftDetentForce = 16;
-    private const byte Off = 0x05, Resistance = 0x21, Vibration = 0x26, Bow = 0x02;
+    private const int DetentStartZone = (FirePercent - 10) * ZoneCount / 100;
+    private const byte Off = 0x05, Resistance = 0x21, Vibration = 0x26;
 
     internal static int LevitationResistance(float mass)
     {
@@ -25,8 +24,8 @@ internal static class Trigger
     internal static bool FireHeld(float travel, bool wasDown, bool hasWeapon) =>
         travel >= (hasWeapon ? (wasDown ? FireRelease : FireThreshold) : ButtonThreshold);
 
-    internal static bool ArmFireDetent(bool armed, float travel) =>
-        travel <= DetentReset || (armed && travel < FireThreshold);
+    internal static bool ArmFireDetent(bool armed, float travel, bool held) =>
+        armed || (!held && travel <= DetentReset);
 
     private static void WriteResistance(byte[] report, int offset, int start, int force)
     {
@@ -52,17 +51,12 @@ internal static class Trigger
 
     internal static void WriteKick(byte[] report, int offset, int force, int hertz)
     {
-        WriteResistance(report, offset, KickZone, force);
+        WriteResistance(report, offset, hertz > 0 ? VibrationZone : KickZone, force);
         if (hertz <= 0 || force <= 0) return;
         report[offset] = Vibration;
         report[offset + Frequency] = (byte)hertz;
     }
 
-    internal static void WriteSoftDetent(byte[] report, int offset)
-    {
-        report[offset] = Bow;
-        report[offset + DetentStart] = (FirePercent - DetentWidthPercent) * byte.MaxValue / 100;
-        report[offset + DetentEnd] = FirePercent * byte.MaxValue / 100;
-        report[offset + DetentStrength] = SoftDetentForce;
-    }
+    internal static void WriteSoftDetent(byte[] report, int offset) =>
+        WriteResistance(report, offset, DetentStartZone, 1);
 }
