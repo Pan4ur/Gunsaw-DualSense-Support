@@ -3,7 +3,7 @@
 ## Utilized DualSense capabilities
 
 - Led - Pulse scarf colors
-- Speaker - Cart engine / Heartrate when low hp / Locator* (works on Bluetooth but more stable with USB)
+- Speaker - Cart engine / Heart rate when low hp / Locator* (works on Bluetooth but more stable with USB)
 - Left linear actuator - Telekinesis weight feedback
 - Right linear actuator - Shoot feedback
 - Linear resonant actuators - Shoot / Engine / Damage feedback
@@ -84,9 +84,11 @@ Touchpad:
 2. Extract the game to C:\Games\Gunsaw (or another folder)
 3. Start the unmodified game once, then close it
 4. Install [BepInEx](https://github.com/bepinex/bepinex/releases) into the game folder — the folder that contains the `Gunsaw.exe`
-5. Download `GunsawDualsenseSupport.dll` from [releases](https://github.com/Pan4ur/Gunsaw-Dualsense-Support/releases)
-6. Copy the `GunsawDualsenseSupport.dll` to ```<Gunsaw folder>\BepInEx\plugins\GunsawDualsenseSupport.dll```
+5. Download zip for your platform from [releases](https://github.com/Pan4ur/Gunsaw-Dualsense-Support/releases)
+6. Unpack the zip to ```<Gunsaw folder>\BepInEx\plugins\``
 7. Connect DualSence via Bluetooth or USB and enjoy
+
+On macOS, you will need to allow execution in your privacy settings
 
 ## Contributing
 
