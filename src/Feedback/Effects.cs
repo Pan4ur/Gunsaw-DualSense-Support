@@ -130,11 +130,7 @@ internal sealed class Effects
                            vehicle.vehicleName?.IndexOf("golf", StringComparison.OrdinalIgnoreCase) >= 0 ||
                            SceneManager.GetActiveScene().name.IndexOf("golf", StringComparison.OrdinalIgnoreCase) >= 0;
                     var rb = vehicle.mainPart.rb;
-                    var velocity = rb.velocity;
-                    var world = WorldReplication.Instance;
-                    if (kart && MultiplayerSession.IsConnected && !MultiplayerSession.IsHost && world != null &&
-                        world.bodies.renderedVelocities.TryGetValue(rb, out var renderedVelocity))
-                        velocity = renderedVelocity;
+                    var velocity = kart && MultiplayerSupport.Enabled ? MultiplayerSupport.VehicleVelocity(rb) : rb.velocity;
                     var speed = velocity.magnitude;
                     if (kart || (speed > 0.3f && vehicle.engineSound.isPlaying))
                     {

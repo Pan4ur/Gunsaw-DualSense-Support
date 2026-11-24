@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -24,37 +25,46 @@ internal static class InputPatch
         yield return AccessTools.Method(typeof(PlayerScript), nameof(PlayerScript.LateUpdate));
         yield return AccessTools.Method(typeof(CameraFollow), nameof(CameraFollow.LateUpdate));
         yield return AccessTools.Method(typeof(BodyWepPickup), nameof(BodyWepPickup.Update));
-        yield return AccessTools.Method(typeof(GunGameRule), nameof(GunGameRule.PickupKeyDown));
         yield return AccessTools.Method(typeof(GameManager), nameof(GameManager.Update));
         yield return AccessTools.Method(typeof(LevitatorScript), nameof(LevitatorScript.TryGrab));
-        yield return AccessTools.Method(typeof(NetworkAvatarManager), nameof(NetworkAvatarManager.TryGrabRemotePlayer));
-        yield return AccessTools.Method(typeof(NpcReplication), nameof(NpcReplication.TryGrabClientCorpse));
-        yield return AccessTools.Method(typeof(MultiplayerHud), nameof(MultiplayerHud.Update));
-        yield return AccessTools.Method(typeof(MultiplayerHudUi), nameof(MultiplayerHudUi.Configure));
-        yield return AccessTools.Method(typeof(ArsenalRuntime), nameof(ArsenalRuntime.Update));
-        yield return AccessTools.Method(typeof(BlackoutRule), nameof(BlackoutRule.HandleInput));
-        yield return AccessTools.Method(typeof(PlayerCarrySystem), nameof(PlayerCarrySystem.FindCarryTarget));
-        yield return AccessTools.Method(typeof(PlayerCarrySystem), nameof(PlayerCarrySystem.Tick));
-        yield return AccessTools.Method(typeof(PlayerCarryPair), nameof(PlayerCarryPair.Tick));
-        yield return AccessTools.Method(typeof(PropHuntSystem), nameof(PropHuntSystem.StunTarget));
-        yield return AccessTools.Method(typeof(PropHuntSystem), nameof(PropHuntSystem.Tick));
-        yield return AccessTools.Method(typeof(PropHuntDisguise), nameof(PropHuntDisguise.PrepareInput));
-        yield return AccessTools.Method(typeof(WorldEnvironmentReplication), nameof(WorldEnvironmentReplication.UpdateZonePrompt));
-        yield return AccessTools.Method(typeof(WorldEnvironmentReplication), nameof(WorldEnvironmentReplication.UpdateButtonReactivationPrompt));
-        yield return AccessTools.Method(typeof(StationRuntime), nameof(StationRuntime.Update));
+        if (MultiplayerSupport.Enabled)
+            foreach (var target in MultiplayerTargets())
+                yield return target;
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static MethodBase[] MultiplayerTargets() =>
+    [
+        AccessTools.Method(typeof(GunGameRule), nameof(GunGameRule.PickupKeyDown)),
+        AccessTools.Method(typeof(NetworkAvatarManager), nameof(NetworkAvatarManager.TryGrabRemotePlayer)),
+        AccessTools.Method(typeof(NpcReplication), nameof(NpcReplication.TryGrabClientCorpse)),
+        AccessTools.Method(typeof(MultiplayerHud), nameof(MultiplayerHud.Update)),
+        AccessTools.Method(typeof(MultiplayerHudUi), nameof(MultiplayerHudUi.Configure)),
+        AccessTools.Method(typeof(ArsenalRuntime), nameof(ArsenalRuntime.Update)),
+        AccessTools.Method(typeof(BlackoutRule), nameof(BlackoutRule.HandleInput)),
+        AccessTools.Method(typeof(PlayerCarrySystem), nameof(PlayerCarrySystem.FindCarryTarget)),
+        AccessTools.Method(typeof(PlayerCarrySystem), nameof(PlayerCarrySystem.Tick)),
+        AccessTools.Method(typeof(PlayerCarryPair), nameof(PlayerCarryPair.Tick)),
+        AccessTools.Method(typeof(PropHuntSystem), nameof(PropHuntSystem.StunTarget)),
+        AccessTools.Method(typeof(PropHuntSystem), nameof(PropHuntSystem.Tick)),
+        AccessTools.Method(typeof(PropHuntDisguise), nameof(PropHuntDisguise.PrepareInput)),
+        AccessTools.Method(typeof(WorldEnvironmentReplication), nameof(WorldEnvironmentReplication.UpdateZonePrompt)),
+        AccessTools.Method(typeof(WorldEnvironmentReplication), nameof(WorldEnvironmentReplication.UpdateButtonReactivationPrompt)),
+        AccessTools.Method(typeof(StationRuntime), nameof(StationRuntime.Update)),
+    ];
 
     [HarmonyPriority(Priority.Last)]
     private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, MethodBase original)
     {
         var target = original.DeclaringType!;
         var player = target == typeof(PlayerScript);
-        var pickup = target == typeof(BodyWepPickup) || target == typeof(GunGameRule);
-        var gameplay = player || pickup || target == typeof(PropHuntDisguise) ||
-                       target == typeof(WorldEnvironmentReplication) || target == typeof(StationRuntime);
+        var pickup = target == typeof(BodyWepPickup) || target.Name == nameof(GunGameRule);
+        var gameplay = player || pickup || target.Name == nameof(PropHuntDisguise) ||
+                       target.Name == nameof(WorldEnvironmentReplication) || target.Name == nameof(StationRuntime);
         var swap = target == typeof(GameManager);
-        var aim = player || swap || target == typeof(CameraFollow) || target == typeof(PlayerCarrySystem) || target == typeof(PropHuntSystem);
-        var levitationRay = target == typeof(LevitatorScript) || target == typeof(NetworkAvatarManager) || target == typeof(NpcReplication);
+        var aim = player || swap || target == typeof(CameraFollow) || target.Name == nameof(PlayerCarrySystem) || target.Name == nameof(PropHuntSystem);
+        var levitationRay = target == typeof(LevitatorScript) || target.Name == nameof(NetworkAvatarManager) || target.Name == nameof(NpcReplication);
+        var stun = target.Name == nameof(PropHuntSystem);
         var codes = instructions.ToList();
         var levitationStart = player ? codes.FindIndex(code => code.LoadsField(Levitator)) : -1;
         var levitationEnd = player ? codes.FindLastIndex(code => code.LoadsField(LevitationLine)) : -1;
@@ -69,7 +79,7 @@ internal static class InputPatch
                 else if (aim)
                     code.operand = AccessTools.Method(typeof(InputPatch), nameof(Pointer));
             }
-            if (code.Calls(MouseDown) && (swap || target == typeof(PropHuntSystem)))
+            if (code.Calls(MouseDown) && (swap || stun))
                 code.operand = AccessTools.Method(typeof(InputPatch), swap ? nameof(SwapMouseDown) : nameof(StunMouseDown));
             if (code.Calls(Axis) && player)
                 code.operand = AccessTools.Method(typeof(InputPatch), nameof(ReadAxis));
@@ -194,17 +204,6 @@ internal static class ShotPatch
     private static void AfterAmmoSpent(WeaponScript weapon) => Plugin.Instance?.OnShot(weapon);
 }
 
-[HarmonyPatch(typeof(Sound), nameof(Sound.Play))]
-internal static class LocatorPatch
-{
-    private static void Postfix(AudioClip clip)
-    {
-        if (Plugin.Instance != null && clip != null && clip == EmbeddedAudioLoader.LocatorSound)
-            Plugin.Instance.Effects.Locate(clip);
-    }
-}
-
-
 [HarmonyPatch(typeof(StandaloneInputModule), "SendMoveEventToSelectedObject")]
 internal static class NativeMenuMovePatch
 {
@@ -249,22 +248,6 @@ internal static class StartLevelPromptPatch
         return PadMenu.StartLevelPrompt(owner, plugin.ControllerActive);
     }
 }
-
-[HarmonyPatch(typeof(PropHuntHud), nameof(PropHuntHud.SetPerk))]
-internal static class PropHuntHintPatch
-{
-    private static void Prefix(ref string label)
-    {
-        if (Plugin.Instance?.ControllerActive != true) return;
-        label = label switch
-        {
-            "[J] Locator" => "[R3] Locator",
-            "[LMB] STUN HUNTER" => "[R1] STUN HUNTER",
-            _ => label
-        };
-    }
-}
-
 
 [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]
 internal static class ControllerSettingsPatch

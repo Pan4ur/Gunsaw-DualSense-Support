@@ -1,4 +1,6 @@
+using System.Runtime.CompilerServices;
 using BepInEx;
+using BepInEx.Bootstrap;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -6,7 +8,7 @@ using UnityEngine;
 namespace GunsawDualSenseSupport;
 
 [BepInPlugin(Id, "GunsawDualSenseSupport", "0.0.1")]
-[BepInDependency(GunsawMultiplayerPlugin.PluginGuid)]
+[BepInDependency(MultiplayerSupport.Guid, BepInDependency.DependencyFlags.SoftDependency)]
 [DefaultExecutionOrder(-1000)]
 public sealed class Plugin : BaseUnityPlugin
 {
@@ -63,7 +65,9 @@ public sealed class Plugin : BaseUnityPlugin
 
             Instance = this;
             harmony = new Harmony(Id);
+            MultiplayerSupport.Enabled = Chainloader.PluginInfos.ContainsKey(MultiplayerSupport.Guid);
             harmony.PatchAll(typeof(Plugin).Assembly);
+            if (MultiplayerSupport.Enabled) MultiplayerSupport.Patch(harmony);
             Logger.LogInfo(emulate ? "DualSense emulator listening on 127.0.0.1:27355" : "DualSense SDL ready");
         }
         catch (Exception error)
@@ -101,12 +105,13 @@ public sealed class Plugin : BaseUnityPlugin
         if (!wasConnected) previous = pad;
 
         var manager = GameManager.main;
-        chatOpen = MultiplayerHud.Instance != null && MultiplayerHud.Instance.ChatOpen;
-        var blockingMenu = MultiplayerLobbyUi.IsOpenInGame || ArsenalMenu.IsOpen || Controls.IsTextInputSelected;
+        var multiplayer = MultiplayerSupport.Enabled ? MultiplayerSupport.ReadInput() : default;
+        chatOpen = multiplayer.ChatOpen;
+        var blockingMenu = multiplayer.MenuOpen || PadMenu.IsTextInputSelected;
         pauseAllowed = usable && !chatOpen && !blockingMenu;
         var wasPlaying = play;
-        play = pauseAllowed && manager != null && !manager.paused && player != null && !(MissionManager.main != null && MissionManager.main.finished) && !MultiplayerHud.IsTyping && !TeamSystem.BlocksPlayerInput && !PropHuntSystem.BlocksInput;
-        gestures.Tick(pad, now, play && wasConnected, pauseAllowed && wasConnected && MultiplayerSession.IsInLobby);
+        play = pauseAllowed && manager != null && !manager.paused && player != null && !(MissionManager.main != null && MissionManager.main.finished) && !multiplayer.BlocksPlay;
+        gestures.Tick(pad, now, play && wasConnected, pauseAllowed && wasConnected && multiplayer.InLobby);
         if (wasPlaying && !play && previous.L2 >= Trigger.ButtonThreshold && player != null && player.levit != null && !Input.GetKey(player.keys["Levitate"]))
             player.levit.UnGrab();
 
@@ -122,16 +127,22 @@ public sealed class Plugin : BaseUnityPlugin
             direction = right.normalized * aimScale;
         }
 
-        pad.Carry = pad.Has(Button.Square) && (previous.Has(Button.Square) ? previous.Carry :
-            play && MultiplayerSession.IsActive && body != null && body.isAlive && !PlayerCarrySystem.IsLocalTarget &&
-            (PlayerCarrySystem.IsLocalCarrier || PlayerCarrySystem.FindCarryTarget(body) != 0));
-        pad.Stun = play && body != null && PropHuntSystem.AbilitiesVisible && PropHuntSystem.IsProp(body);
+        if (MultiplayerSupport.Enabled) UpdateMultiplayerActions(body);
         
         if (usable && chatOpen && !wasChatOpen)
         {
             keyboard.Reset();
             chatTouch.Reset(pad.Touching);
         }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void UpdateMultiplayerActions(BodyScript? body)
+    {
+        pad.Carry = pad.Has(Button.Square) && (previous.Has(Button.Square) ? previous.Carry :
+            play && MultiplayerSession.IsActive && body != null && body.isAlive && !PlayerCarrySystem.IsLocalTarget &&
+            (PlayerCarrySystem.IsLocalCarrier || PlayerCarrySystem.FindCarryTarget(body) != 0));
+        pad.Stun = play && body != null && PropHuntSystem.AbilitiesVisible && PropHuntSystem.IsProp(body);
     }
 
     internal void OnShot(WeaponScript weapon)
@@ -192,9 +203,10 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static Color32 ScarfLightColor(BodyScript? body, float now)
     {
-        var scarf = body != null ? NetworkAvatarUtilities.CreateScarfState(body) : default;
-        Color start = scarf.Visible ? scarf.StartColor : Color.HSVToRGB(PlayerPrefs.GetFloat("scStHue"), PlayerPrefs.GetFloat("scStSat"), PlayerPrefs.GetFloat("scStVal"));
-        Color end = scarf.Visible ? scarf.EndColor : Color.HSVToRGB(PlayerPrefs.GetFloat("scEnHue"), PlayerPrefs.GetFloat("scEnSat"), PlayerPrefs.GetFloat("scEnVal"));
+        var scarf = body != null ? body.GetComponentInChildren<ScarfPhysics>(true) : null;
+        var renderer = scarf != null && scarf.gameObject.activeInHierarchy ? scarf.pointRenderer : null;
+        Color start = renderer != null ? (Color32)renderer.startColor : Color.HSVToRGB(PlayerPrefs.GetFloat("scStHue"), PlayerPrefs.GetFloat("scStSat"), PlayerPrefs.GetFloat("scStVal"));
+        Color end = renderer != null ? (Color32)renderer.endColor : Color.HSVToRGB(PlayerPrefs.GetFloat("scEnHue"), PlayerPrefs.GetFloat("scEnSat"), PlayerPrefs.GetFloat("scEnVal"));
         return Color.Lerp(start, end, Mathf.SmoothStep(0f, 1f, Mathf.PingPong(now / 3f, 1f)));
     }
 
@@ -287,7 +299,13 @@ public sealed class Plugin : BaseUnityPlugin
     {
         if (target == typeof(GameManager))
             return !held && ((key == KeyCode.Escape && pauseAllowed && Pressed(Button.Options)) || (key == KeyCode.R && play && Pressed(Button.Right)));
-        
+
+        return MultiplayerSupport.Enabled && MultiplayerMenuKey(key, held, target);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool MultiplayerMenuKey(KeyCode key, bool held, Type target)
+    {
         if (target == typeof(MultiplayerHudUi)) 
             return held && play && key == Controls.keys[Controls.SEE_PLAYER] && gestures.Players;
         
@@ -327,7 +345,8 @@ public sealed class Plugin : BaseUnityPlugin
             (key == keys["Ragdoll"] && state.Has(Button.Cross)) ||
             (key == keys["Kick"] && state.Has(Button.R1) && !state.Stun) ||
             (key == keys["Use"] && state.Has(Button.Triangle)) ||
-            (key == keys["EnterVehicle"] && state.Has(Button.Square) && !state.Carry && ((player.bodyScript != null && player.bodyScript.inVehicle) || !ArsenalMenu.ConsumesWhineKey(KeyCode.B))) ||
+            (key == keys["EnterVehicle"] && state.Has(Button.Square) && !state.Carry &&
+                ((player.bodyScript != null && player.bodyScript.inVehicle) || !MultiplayerSupport.Enabled || !MultiplayerSupport.ArsenalConsumesVehicleButton())) ||
             (key == keys["Fire"] && state.Firing) ||
             (key == keys["Levitate"] && state.L2 >= Trigger.ButtonThreshold) ||
             (key == keys["Unarmed"] && state.Has(Button.Up)) ||
@@ -431,6 +450,7 @@ public sealed class Plugin : BaseUnityPlugin
         }
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private void ChatKeyboard()
     {
         var hud = MultiplayerHud.Instance;

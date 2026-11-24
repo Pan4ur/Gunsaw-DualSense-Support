@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -47,16 +48,14 @@ internal sealed class PadMenu(PadKeyboard keyboard)
             return;
         }
 
-        var owner = GunsawMultiplayerPlugin.Instance;
-        var lobby = owner != null ? owner.multiplayerLobbyUi : null;
         var manager = GameManager.main;
-        var root = CurrentScope(lobby, manager);
+        var root = CurrentScope(manager);
         if (root == null)
         {
             Reset();
             var editor = LevelEditor.main;
             if (pressed(Button.Circle) && editor != null && editor.gameObject.scene == SceneManager.GetActiveScene() &&
-                !editor.fadingOut && !Controls.IsTextInputSelected)
+                !editor.fadingOut && !IsTextInputSelected)
                 editor.BackToMenu();
             return;
         }
@@ -74,9 +73,9 @@ internal sealed class PadMenu(PadKeyboard keyboard)
         bool square = pressed(Button.Square), triangle = pressed(Button.Triangle), options = pressed(Button.Options);
         bool levelScreen = mainMenu != null && root == mainMenu.levelSelect;
         bool characterScreen = mainMenu != null && root == mainMenu.characterObj;
-        bool lobbyShortcut = triangle && manager != null && manager.paused && root == manager.pauseMenu && lobby != null;
+        bool lobbyShortcut = triangle && manager != null && manager.paused && root == manager.pauseMenu && MultiplayerSupport.Enabled && HasLobby();
         if (move != UiDirection.None || confirm || back || leftPage || rightPage || lobbyShortcut || options ||
-            (square && (levelScreen || ArsenalMenu.IsOpen)) || (triangle && characterScreen))
+            (square && (levelScreen || (MultiplayerSupport.Enabled && ArsenalOpen()))) || (triangle && characterScreen))
             controllerFocus = true;
         if (!controllerFocus) return;
 
@@ -115,13 +114,12 @@ internal sealed class PadMenu(PadKeyboard keyboard)
         }
         if (back || (root != manager?.pauseMenu && options))
         {
-            Cancel(root, lobby, manager, events);
+            Cancel(root, manager, events);
             return;
         }
-        if (lobbyShortcut && owner != null)
+        if (lobbyShortcut)
         {
-            owner.visible = true;
-            owner.RefreshLobbies();
+            OpenLobby();
             return;
         }
         if ((leftPage || rightPage) && characterScreen && mainMenu != null)
@@ -132,7 +130,7 @@ internal sealed class PadMenu(PadKeyboard keyboard)
 
         if (focus == null || !Eligible(focus, root))
         {
-            var first = existing != null && Visible(existing) ? existing : InitialFocus(root, lobby);
+            var first = existing != null && Visible(existing) ? existing : InitialFocus(root);
             if (first != null) Focus(first, events);
             else if (confirm && MissionManager.main != null && root == MissionManager.main.finishScreen)
                 SceneLoader.main.LoadScene("LevelSelect");
@@ -156,32 +154,19 @@ internal sealed class PadMenu(PadKeyboard keyboard)
         else ExecuteEvents.Execute(item.gameObject, new BaseEventData(events), ExecuteEvents.submitHandler);
     }
 
-    private GameObject? CurrentScope(MultiplayerLobbyUi? lobby, GameManager? manager)
+    internal static bool IsTextInputSelected
     {
-        if (Active(TeamSystem.panel)) return TeamSystem.panel;
-        if (ArsenalMenu.IsOpen) return ArsenalMenu.instance.menu;
-        if (lobby != null && Active(lobby.root))
+        get
         {
-            if (Active(lobby.customLevelSuggestionDialog)) return lobby.customLevelSuggestionDialog;
-            if (Active(lobby.passwordDialog)) return lobby.passwordDialog;
-            if (Active(lobby.crossServerDialog)) return lobby.crossServerDialog;
-            if (Active(lobby.resetSettingsDialog)) return lobby.resetSettingsDialog;
-            if (Active(lobby.sawTunerWindow)) return lobby.sawTunerWindow;
-            if (Active(lobby.weaponPicker)) return lobby.weaponPicker;
-            if (Active(lobby.sequenceEditor)) return lobby.sequenceEditor;
-            if (Active(lobby.teamsEditor)) return lobby.teamsEditor;
-            if (Active(lobby.presetsPanel)) return lobby.presetsPanel;
-            if (Active(lobby.serverBrowserPanel)) return lobby.serverBrowserPanel;
-            var browser = lobby.customLevelBrowser;
-            if (browser != null && browser.IsOpen && Active(browser.panel))
-            {
-                if (Active(browser.deleteLocalPanel)) return browser.deleteLocalPanel;
-                if (Active(browser.editLocalPanel)) return browser.editLocalPanel;
-                if (Active(browser.addLocalPanel)) return browser.addLocalPanel;
-                return browser.panel;
-            }
-            if (Active(lobby.panel)) return lobby.panel;
+            var selected = EventSystem.current != null ? EventSystem.current.currentSelectedGameObject : null;
+            return selected != null && (selected.GetComponentInParent<TMP_InputField>() != null ||
+                selected.GetComponentInParent<InputField>() != null);
         }
+    }
+
+    private GameObject? CurrentScope(GameManager? manager)
+    {
+        if (MultiplayerSupport.Enabled && MultiplayerScope() is { } multiplayerScope) return multiplayerScope;
         if (manager != null && manager.paused && Active(manager.pauseMenu)) return manager.pauseMenu;
         var mission = MissionManager.main;
         if (mission != null && mission.finished && Active(mission.finishScreen)) return mission.finishScreen;
@@ -210,6 +195,57 @@ internal sealed class PadMenu(PadKeyboard keyboard)
             4 => mainMenu.credits,
             _ => null
         };
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static GameObject? MultiplayerScope()
+    {
+        if (Active(TeamSystem.panel)) return TeamSystem.panel;
+        if (ArsenalMenu.IsOpen) return ArsenalMenu.instance.menu;
+        var lobby = Lobby();
+        if (lobby != null && Active(lobby.root))
+        {
+            if (Active(lobby.customLevelSuggestionDialog)) return lobby.customLevelSuggestionDialog;
+            if (Active(lobby.passwordDialog)) return lobby.passwordDialog;
+            if (Active(lobby.crossServerDialog)) return lobby.crossServerDialog;
+            if (Active(lobby.resetSettingsDialog)) return lobby.resetSettingsDialog;
+            if (Active(lobby.sawTunerWindow)) return lobby.sawTunerWindow;
+            if (Active(lobby.weaponPicker)) return lobby.weaponPicker;
+            if (Active(lobby.sequenceEditor)) return lobby.sequenceEditor;
+            if (Active(lobby.teamsEditor)) return lobby.teamsEditor;
+            if (Active(lobby.presetsPanel)) return lobby.presetsPanel;
+            if (Active(lobby.serverBrowserPanel)) return lobby.serverBrowserPanel;
+            var browser = lobby.customLevelBrowser;
+            if (browser != null && browser.IsOpen && Active(browser.panel))
+            {
+                if (Active(browser.deleteLocalPanel)) return browser.deleteLocalPanel;
+                if (Active(browser.editLocalPanel)) return browser.editLocalPanel;
+                if (Active(browser.addLocalPanel)) return browser.addLocalPanel;
+                return browser.panel;
+            }
+            if (Active(lobby.panel)) return lobby.panel;
+        }
+        return null;
+    }
+
+    private static MultiplayerLobbyUi? Lobby()
+    {
+        var owner = GunsawMultiplayerPlugin.Instance;
+        return owner != null ? owner.multiplayerLobbyUi : null;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool HasLobby() => Lobby() != null;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool ArsenalOpen() => ArsenalMenu.IsOpen;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void OpenLobby()
+    {
+        var owner = GunsawMultiplayerPlugin.Instance;
+        owner.visible = true;
+        owner.RefreshLobbies();
     }
 
     private static bool Active(GameObject? obj) => obj != null && obj.activeInHierarchy;
@@ -300,9 +336,7 @@ internal sealed class PadMenu(PadKeyboard keyboard)
     private void StartSelectedLevel(MainMenuManager owner)
     {
         if (owner.currentScreen != 1 || !LevelUnlocked(owner)) return;
-        var multiplayer = GunsawMultiplayerPlugin.Instance;
-        var lobby = multiplayer != null ? multiplayer.multiplayerLobbyUi : null;
-        if (CurrentScope(lobby, GameManager.main) != owner.levelSelect) return;
+        if (CurrentScope(GameManager.main) != owner.levelSelect) return;
 
         Sound.Play(owner.clickSound, Vector2.zero, twoDimensional: true, pitchShift: false);
         MissionSelect.main.TryLoadMission(owner.curIndex);
@@ -324,11 +358,25 @@ internal sealed class PadMenu(PadKeyboard keyboard)
         Sound.Play(menu.clickSound, Vector2.zero, twoDimensional: true, pitchShift: false);
     }
 
-    private void Cancel(GameObject root, MultiplayerLobbyUi? lobby, GameManager? manager, EventSystem events)
+    private void Cancel(GameObject root, GameManager? manager, EventSystem events)
     {
-        if (root == TeamSystem.panel) return;
+        if (manager != null && root == manager.pauseMenu) manager.UnPause();
+        else if (MultiplayerSupport.Enabled && CancelMultiplayer(root, events)) return;
+        else if (mainMenu != null && root == mainMenu.characterObj) mainMenu.EnterLevelSelect();
+        else if (mainMenu != null && root != mainMenu.title)
+        {
+            var binder = root.GetComponentInChildren<ControlBinder>();
+            if (binder != null && binder.binding) binder.binding = false;
+            else mainMenu.EnterTitle();
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CancelMultiplayer(GameObject root, EventSystem events)
+    {
+        if (root == TeamSystem.panel) return true;
+        var lobby = Lobby();
         if (ArsenalMenu.IsOpen && root == ArsenalMenu.instance.menu) ArsenalMenu.instance.CloseAndEquip();
-        else if (manager != null && root == manager.pauseMenu) manager.UnPause();
         else if (lobby != null && root == lobby.panel) GunsawMultiplayerPlugin.Instance.visible = false;
         else if (lobby != null && root == lobby.passwordDialog) lobby.ClosePasswordDialog();
         else if (lobby != null && root == lobby.serverBrowserPanel) lobby.SetServerBrowserOpen(false);
@@ -340,24 +388,26 @@ internal sealed class PadMenu(PadKeyboard keyboard)
             var cancel = CancelButton(root);
             if (cancel != null) ExecuteEvents.Execute(cancel.gameObject, new BaseEventData(events), ExecuteEvents.submitHandler);
         }
-        else if (mainMenu != null && root == mainMenu.characterObj) mainMenu.EnterLevelSelect();
-        else if (mainMenu != null && root != mainMenu.title)
-        {
-            var binder = root.GetComponentInChildren<ControlBinder>();
-            if (binder != null && binder.binding) binder.binding = false;
-            else mainMenu.EnterTitle();
-        }
+        else return false;
+        return true;
     }
 
-    private Selectable? InitialFocus(GameObject root, MultiplayerLobbyUi? lobby)
+    private Selectable? InitialFocus(GameObject root)
     {
-        if (lobby != null && (root == lobby.resetSettingsDialog || root == lobby.crossServerDialog ||
-            root == lobby.customLevelSuggestionDialog || root == lobby.customLevelBrowser?.deleteLocalPanel))
+        if (MultiplayerSupport.Enabled && PrefersCancel(root))
         {
             var cancel = CancelButton(root);
             if (cancel != null && Visible(cancel)) return cancel;
         }
         return Find(root, null, UiDirection.None);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool PrefersCancel(GameObject root)
+    {
+        var lobby = Lobby();
+        return lobby != null && (root == lobby.resetSettingsDialog || root == lobby.crossServerDialog ||
+            root == lobby.customLevelSuggestionDialog || root == lobby.customLevelBrowser?.deleteLocalPanel);
     }
 
     private static Selectable? CancelButton(GameObject root)
@@ -526,7 +576,8 @@ internal sealed class PadMenu(PadKeyboard keyboard)
             keyboard.Show(overlay, bounds.center.y < Screen.height / 2f);
             return;
         }
-        string hint = scope != null && GameManager.main != null && scope == GameManager.main.pauseMenu ? "   Triangle: Multiplayer" : "";
+        string hint = scope != null && GameManager.main != null && scope == GameManager.main.pauseMenu &&
+            MultiplayerSupport.Enabled && HasLobby() ? "   Triangle: Multiplayer" : "";
         overlay.ShowFocus(bounds, "D-pad / L stick: move   X: select   Circle: back" + hint);
     }
 }

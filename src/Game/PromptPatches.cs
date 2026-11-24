@@ -39,36 +39,10 @@ internal static class PlayerPromptPatch
     }
 }
 
-[HarmonyPatch(typeof(MultiplayerHudUi), nameof(MultiplayerHudUi.Configure))]
-internal static class CarryHintPatch
-{
-    private static void Postfix(MultiplayerHudUi __instance)
-    {
-        var label = __instance.activationText;
-        if (label == null || !label.gameObject.activeInHierarchy || Plugin.Instance?.ControllerActive != true) return;
-        var text = label.text;
-        if (text is not ("Press C to carry player" or "Press C to stop carrying player")) return;
-        label.spriteAsset = MenuPromptSprites.Asset;
-        label.text = "Press " + MenuPromptSprites.Hint(Button.Square) + text.Substring("Press C".Length);
-    }
-}
-
-[HarmonyPatch(typeof(StationRuntime), nameof(StationRuntime.LateUpdate))]
-internal static class StationPromptPatch
-{
-    private static void Postfix(StationRuntime __instance) => PlayerPromptPatch.Triangle.Apply(__instance.useIcon);
-}
-
 [HarmonyPatch(typeof(BodyWepPickup), nameof(BodyWepPickup.Update))]
 internal static class WeaponPromptPatch
 {
     private static readonly PromptSprite Prompt = new(Button.Down);
 
     private static void Postfix(BodyWepPickup __instance) => Prompt.Apply(__instance.pickupSprite);
-}
-
-[HarmonyPatch(typeof(ArsenalRuntime), nameof(ArsenalRuntime.Update))]
-internal static class ArsenalPromptPatch
-{
-    private static void Postfix(ArsenalRuntime __instance) => PlayerPromptPatch.Square.Apply(__instance.pickupPrompt);
 }
