@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct MachTimebase
@@ -14,10 +14,10 @@ internal sealed class BluetoothSpeaker : IDisposable
     internal const int Frames = 1024;
     private const string MacSystem = "/usr/lib/libSystem.B.dylib";
     private const string Library = "gunsaw-dualsense-bt-audio";
+    private static int inUse;
     private readonly object gate = new();
     private readonly float[][] queue = [new float[Frames], new float[Frames], new float[Frames], new float[Frames]];
     private readonly IntPtr handle;
-    private readonly Thread sender;
     private readonly Action<string> log;
     private int read, count;
     private bool stopping, failed;
@@ -45,18 +45,26 @@ internal sealed class BluetoothSpeaker : IDisposable
     {
         this.handle = handle;
         this.log = log;
-        sender = new Thread(Play) { IsBackground = true, Name = "Gunsaw DualSense audio" };
-        sender.Start();
+        new Thread(Play) { IsBackground = true, Name = "Gunsaw DualSense audio" }.Start();
     }
 
     internal static BluetoothSpeaker? Open(Action<string> log, out string? problem)
     {
         problem = null;
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return null;
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || Interlocked.CompareExchange(ref inUse, 1, 0) != 0)
+            return null;
+
+        IntPtr handle = IntPtr.Zero;
+        bool started = false;
         try
         {
-            IntPtr handle = gunsaw_bt_open(out int result);
-            if (handle != IntPtr.Zero) return new BluetoothSpeaker(handle, log);
+            handle = gunsaw_bt_open(out int result);
+            if (handle != IntPtr.Zero)
+            {
+                var speaker = new BluetoothSpeaker(handle, log);
+                started = true;
+                return speaker;
+            }
             problem = $"0x{result:X8}";
         }
         catch (DllNotFoundException)
@@ -66,6 +74,14 @@ internal sealed class BluetoothSpeaker : IDisposable
         catch (EntryPointNotFoundException)
         {
             problem = "native Bluetooth audio library incompatible";
+        }
+        finally
+        {
+            if (!started)
+            {
+                if (handle != IntPtr.Zero) CloseHandle(handle);
+                else Volatile.Write(ref inUse, 0);
+            }
         }
         return null;
     }
@@ -199,33 +215,32 @@ internal sealed class BluetoothSpeaker : IDisposable
                 }
 
                 var volume = Volatile.Read(ref gain);
-                if (!hasAudio || volume == 0)
+                if (hasAudio && volume != 0)
                 {
-                    if (pendingLightbar.HasValue) SendLightbar(pendingLightbar.Value);
-                    continue;
-                }
-                for (var i = 0; i < Frames; i++) samples[i] *= volume;
-                var writeAt = mach_absolute_time();
-                var result = gunsaw_bt_send(handle, samples);
-                var writeDuration = mach_absolute_time() - writeAt;
-                lock (gate)
-                {
-                    if (result != 0)
+                    for (var i = 0; i < Frames; i++) samples[i] *= volume;
+                    var writeAt = mach_absolute_time();
+                    var result = gunsaw_bt_send(handle, samples);
+                    var writeDuration = mach_absolute_time() - writeAt;
+                    lock (gate)
                     {
-                        failed = true;
-                        error = result;
-                        return;
+                        if (stopping) return;
+                        if (result != 0)
+                        {
+                            failed = true;
+                            error = result;
+                            return;
+                        }
+                        packets++;
+                        maxWrite = Math.Max(maxWrite, writeDuration);
+                        if (lastWrite != 0)
+                        {
+                            ulong gap = writeAt - lastWrite;
+                            maxGap = Math.Max(maxGap, gap);
+                            if (gap > interval * 3 / 2) gaps++;
+                        }
                     }
-                    packets++;
-                    maxWrite = Math.Max(maxWrite, writeDuration);
-                    if (lastWrite != 0)
-                    {
-                        ulong gap = writeAt - lastWrite;
-                        maxGap = Math.Max(maxGap, gap);
-                        if (gap > interval * 3 / 2) gaps++;
-                    }
+                    lastWrite = writeAt;
                 }
-                lastWrite = writeAt;
                 if (pendingLightbar.HasValue) SendLightbar(pendingLightbar.Value);
             }
         }
@@ -239,8 +254,14 @@ internal sealed class BluetoothSpeaker : IDisposable
         }
         finally
         {
-            gunsaw_bt_close(handle);
+            CloseHandle(handle);
         }
+    }
+
+    private static void CloseHandle(IntPtr handle)
+    {
+        try { gunsaw_bt_close(handle); }
+        finally { Volatile.Write(ref inUse, 0); }
     }
 
     public void Dispose()
@@ -250,6 +271,5 @@ internal sealed class BluetoothSpeaker : IDisposable
             stopping = true;
             Monitor.Pulse(gate);
         }
-        sender.Join();
     }
 }

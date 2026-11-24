@@ -1,4 +1,4 @@
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal static class Sticks
 {

@@ -3,7 +3,7 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parent
-NAME = "GunsawDualSenceSupport"
+NAME = "GunsawDualSenseSupport"
 NAMES = {
     "macos-arm64": "libgunsaw-dualsense-sdl.dylib",
     "windows-x64": "gunsaw-dualsense-sdl.dll",

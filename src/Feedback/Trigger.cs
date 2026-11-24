@@ -1,4 +1,4 @@
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal static class Trigger
 {
@@ -15,8 +15,8 @@ internal static class Trigger
     internal static int LevitationResistance(float mass)
     {
         if (!(mass > 0)) return 1;
-        float weight = Math.Min(mass / 19f, 1f);
-        return 1 + (int)Math.Round(7 * weight * weight * weight);
+        var weight = Math.Min(mass / 19f, 1f);
+        return 1 + (int) Math.Round(7 * weight * weight * weight);
     }
 
     internal static void WriteLevitationResistance(byte[] report, int offset, int force) =>

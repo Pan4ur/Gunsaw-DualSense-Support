@@ -1,4 +1,4 @@
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal sealed class Gestures
 {

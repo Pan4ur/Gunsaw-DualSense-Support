@@ -4,19 +4,18 @@ using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
-internal sealed class PadMenu
+internal sealed class PadMenu(PadKeyboard keyboard)
 {
     private const string CharacterSelectLabel = "CHARACTER\nSELECT";
     private const string StartLevelKeyboard = "START LEVEL [SPACE]";
     private static readonly string StartLevelController = "START LEVEL <size=125%>" + MenuPromptSprites.Hint(Button.Cross) + "</size>";
     private static readonly string BackToTitleController = "BACK TO TITLE " + MenuPromptSprites.Hint(Button.Circle);
     private static readonly string CharacterSelectController = CharacterSelectLabel + " " + MenuPromptSprites.Hint(Button.Square);
-    private static readonly string BackToLevelController = "BACK TO LEVEL " + MenuPromptSprites.Hint(Button.Square);
+    private static readonly string BackToLevelController = "BACK TO LEVEL " + MenuPromptSprites.Hint(Button.Circle);
     private static readonly string AdvancedInfoController = "Advanced info " + MenuPromptSprites.Hint(Button.Triangle);
     private readonly UiRepeat repeat = new();
-    private readonly PadKeyboard keyboard = new();
     private readonly List<Selectable> candidates = new();
     private readonly Vector3[] corners = new Vector3[4];
     private MainMenuManager? mainMenu, levelControlsOwner;
@@ -52,46 +51,45 @@ internal sealed class PadMenu
         var lobby = owner != null ? owner.multiplayerLobbyUi : null;
         var manager = GameManager.main;
         var root = CurrentScope(lobby, manager);
+        if (root == null)
+        {
+            Reset();
+            return;
+        }
         if (root != scope)
         {
             field = focus = null;
             repeat.Tick(default, Time.unscaledTime);
             scope = root;
         }
-        if (root == null)
-        {
-            Reset();
-            return;
-        }
 
         var move = repeat.Tick(pad, Time.unscaledTime);
         bool confirm = pressed(Button.Cross);
         bool back = pressed(Button.Circle);
         bool leftPage = pressed(Button.L1), rightPage = pressed(Button.R1);
-        bool characterShortcut = mainMenu != null && root == mainMenu.levelSelect && pressed(Button.Square);
+        bool square = pressed(Button.Square), triangle = pressed(Button.Triangle), options = pressed(Button.Options);
+        bool levelScreen = mainMenu != null && root == mainMenu.levelSelect;
         bool characterScreen = mainMenu != null && root == mainMenu.characterObj;
-        bool levelShortcut = characterScreen && pressed(Button.Square);
-        bool advancedShortcut = characterScreen && pressed(Button.Triangle);
-        bool lobbyShortcut = pressed(Button.Triangle) && manager != null && manager.paused && root == manager.pauseMenu && lobby != null;
-        if (move != UiDirection.None || confirm || back || leftPage || rightPage || lobbyShortcut || pressed(Button.Options) ||
-            characterShortcut || levelShortcut || advancedShortcut || (ArsenalMenu.IsOpen && pressed(Button.Square)))
+        bool lobbyShortcut = triangle && manager != null && manager.paused && root == manager.pauseMenu && lobby != null;
+        if (move != UiDirection.None || confirm || back || leftPage || rightPage || lobbyShortcut || options ||
+            (square && (levelScreen || ArsenalMenu.IsOpen)) || (triangle && characterScreen))
             controllerFocus = true;
         if (!controllerFocus) return;
 
-        if (mainMenu != null && root == mainMenu.levelSelect)
+        if (levelScreen && mainMenu != null)
         {
             if (back) mainMenu.EnterTitle();
-            else if (characterShortcut) mainMenu.EnterCharacterSelect();
+            else if (square) mainMenu.EnterCharacterSelect();
             else if (confirm) StartSelectedLevel(mainMenu);
             else if (leftPage || rightPage) CycleMainMenu(mainMenu, rightPage ? 1 : -1);
             return;
         }
-        if (levelShortcut && mainMenu != null)
+        if (characterScreen && back && mainMenu != null)
         {
             mainMenu.EnterLevelSelect();
             return;
         }
-        if (advancedShortcut && mainMenu != null && mainMenu.advInfoPanel != null && mainMenu.advInfoTip != null)
+        if (characterScreen && triangle && mainMenu != null && mainMenu.advInfoPanel != null && mainMenu.advInfoTip != null)
         {
             mainMenu.advInfoPanel.SetActive(true);
             mainMenu.advInfoTip.SetActive(false);
@@ -101,19 +99,17 @@ internal sealed class PadMenu
         var events = EventSystem.current;
         if (events == null) return;
         var selected = events.currentSelectedGameObject;
-        var selectedField = selected != null ? selected.GetComponent<Selectable>() : null;
-        if (selectedField is not TMP_InputField && selectedField is not InputField) selectedField = null;
-        if (selectedField != null && !Eligible(selectedField, root)) selectedField = null;
-        if (field != null && field != selectedField) field = null;
-        if (field == null && selectedField != null && IsEditing(selectedField))
-            OpenField(selectedField);
+        var existing = selected != null ? selected.GetComponent<Selectable>() : null;
+        if (existing != null && !Eligible(existing, root)) existing = null;
+        if (field != existing) field = null;
+        if (field == null && existing != null && IsEditing(existing)) OpenField(existing);
 
         if (field != null)
         {
-            EditField(pad, pressed, back || pressed(Button.Options));
+            EditField(field, pad, pressed, back || options);
             return;
         }
-        if (back || (root != manager?.pauseMenu && pressed(Button.Options)))
+        if (back || (root != manager?.pauseMenu && options))
         {
             Cancel(root, lobby, manager, events);
             return;
@@ -124,7 +120,7 @@ internal sealed class PadMenu
             owner.RefreshLobbies();
             return;
         }
-        if ((leftPage || rightPage) && mainMenu != null && root == mainMenu.characterObj)
+        if ((leftPage || rightPage) && characterScreen && mainMenu != null)
         {
             CycleMainMenu(mainMenu, rightPage ? 1 : -1);
             return;
@@ -132,9 +128,7 @@ internal sealed class PadMenu
 
         if (focus == null || !Eligible(focus, root))
         {
-            var existing = selected != null ? selected.GetComponent<Selectable>() : null;
-            var first = existing != null && Eligible(existing, root) && Visible(existing) ? existing :
-                InitialFocus(root, lobby);
+            var first = existing != null && Visible(existing) ? existing : InitialFocus(root, lobby);
             if (first != null) Focus(first, events);
             else if (confirm && MissionManager.main != null && root == MissionManager.main.finishScreen)
                 SceneLoader.main.LoadScene("LevelSelect");
@@ -147,19 +141,15 @@ internal sealed class PadMenu
             if (next != null) Focus(next, events);
         }
         if (!confirm || !Visible(focus)) return;
-        if (focus is TMP_InputField tmp)
+        var item = focus;
+        if (item is TMP_InputField or InputField)
         {
-            events.SetSelectedGameObject(tmp.gameObject);
-            tmp.ActivateInputField();
-            OpenField(tmp);
+            events.SetSelectedGameObject(item.gameObject);
+            if (item is TMP_InputField tmp) tmp.ActivateInputField();
+            else ((InputField)item).ActivateInputField();
+            OpenField(item);
         }
-        else if (focus is InputField legacy)
-        {
-            events.SetSelectedGameObject(legacy.gameObject);
-            legacy.ActivateInputField();
-            OpenField(legacy);
-        }
-        else ExecuteEvents.Execute(focus.gameObject, new BaseEventData(events), ExecuteEvents.submitHandler);
+        else ExecuteEvents.Execute(item.gameObject, new BaseEventData(events), ExecuteEvents.submitHandler);
     }
 
     private GameObject? CurrentScope(MultiplayerLobbyUi? lobby, GameManager? manager)
@@ -478,32 +468,22 @@ internal sealed class PadMenu
         keyboard.Reset();
     }
 
-    private void EditField(Pad pad, Func<Button, bool> pressed, bool back)
+    private void EditField(Selectable editing, Pad pad, Func<Button, bool> pressed, bool back)
     {
-        if (field == null) return;
-        if (back)
+        var key = back ? '\0' : keyboard.Tick(pad, pressed);
+        if (!back && !IsEditing(editing)) return;
+        if (back || key == '↵')
         {
-            if (field is TMP_InputField tmp) tmp.DeactivateInputField();
-            else if (field is InputField legacy) legacy.DeactivateInputField();
             field = null;
-            return;
-        }
-
-        char key = keyboard.Tick(pad, pressed);
-        if (!IsEditing(field)) return;
-        if (key == '↵')
-        {
-            var editing = field;
-            field = null;
-            if (editing is TMP_InputField tmpSubmit)
+            if (editing is TMP_InputField tmp)
             {
-                tmpSubmit.onSubmit.Invoke(tmpSubmit.text);
-                tmpSubmit.DeactivateInputField();
+                if (!back) tmp.onSubmit.Invoke(tmp.text);
+                tmp.DeactivateInputField();
             }
-            else if (editing is InputField legacySubmit)
+            else if (editing is InputField legacy)
             {
-                legacySubmit.onSubmit.Invoke(legacySubmit.text);
-                legacySubmit.DeactivateInputField();
+                if (!back) legacy.onSubmit.Invoke(legacy.text);
+                legacy.DeactivateInputField();
             }
             return;
         }
@@ -512,19 +492,19 @@ internal sealed class PadMenu
             key == '⌫' ? KeyCode.Backspace : KeyCode.None;
         if (key == '\0' && code == KeyCode.None) return;
         var input = new Event { type = EventType.KeyDown, keyCode = code, character = code == KeyCode.None ? key : '\0' };
-        if (field is TMP_InputField tmpField)
+        if (editing is TMP_InputField tmpField)
         {
             tmpField.ProcessEvent(input);
             tmpField.ForceLabelUpdate();
         }
-        else if (field is InputField legacyField)
+        else if (editing is InputField legacyField)
         {
             legacyField.ProcessEvent(input);
             legacyField.ForceLabelUpdate();
         }
     }
 
-    internal void Reset()
+    private void Reset()
     {
         scope = null;
         controllerFocus = false;

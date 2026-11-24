@@ -2,7 +2,7 @@ using HarmonyLib;
 using TMPro;
 using UnityEngine;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 [HarmonyPatch(typeof(GameManager), nameof(GameManager.Update))]
 internal static class ReformHintPatch

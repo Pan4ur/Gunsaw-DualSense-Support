@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal sealed class Effects
 {
@@ -19,7 +19,7 @@ internal sealed class Effects
     internal int ShotFrame { get; private set; } = -1;
     private bool detentArmed = true;
 
-    internal (int Force, int Hertz, float Low, float High) Shot(WeaponScript source, bool held)
+    internal (int Force, int Hertz, float Low, float High, float TriggerDuration) Shot(WeaponScript source, bool held)
     {
         var weapon = source.stats;
         var now = Time.unscaledTime;
@@ -41,9 +41,10 @@ internal sealed class Effects
         shot = new RecoilPulse(damage, weapon.bulletAmount, weapon.slot == 0, launcher, rocket != null, interval, weapon.fullAuto);
         shotAt = now;
         ShotFrame = Time.frameCount;
-        var (force, hertz) = shot.TriggerAt(0, held, source.ammo > 0);
+        var canContinue = source.ammo > 0 && !source.isReloading;
+        var (force, hertz) = shot.TriggerAt(0, held, canContinue);
         var (low, high) = shot.At(0);
-        return (force, hertz, low, high);
+        return (force, hertz, low, high, shot.TriggerDuration(canContinue));
     }
 
     internal void Locate(AudioClip clip)
@@ -56,7 +57,7 @@ internal sealed class Effects
         body != null && body.isAlive && !body.unarmed && body.weapon != null && body.weapon.stats != null;
 
     internal Feedback Tick(
-        PlayerScript? player,
+        BodyScript? body,
         float now,
         Speaker? speaker,
         bool enabled,
@@ -64,7 +65,6 @@ internal sealed class Effects
         float speakerGain,
         float triggerTravel)
     {
-        var body = player != null ? player.bodyScript : null;
         bool hasFireWeapon = enabled && HasFireWeapon(body);
         detentArmed = !hasFireWeapon || Trigger.ArmFireDetent(detentArmed, triggerTravel);
         if (!enabled || !triggerHeld) autoInterval = 0;
@@ -109,14 +109,10 @@ internal sealed class Effects
                     output.FirePercent = Trigger.FirePercent;
                     output.RightDetent = detentArmed;
 
-                    if (weapon == shotWeapon)
+                    if (weapon == shotWeapon && triggerHeld && shotElapsed >= 0)
                     {
-                        (output.RightKick, output.RightHz) =
-                            shot.TriggerAt(
-                                shotElapsed,
-                                triggerHeld,
-                                canContinue
-                            );
+                        output.RightKickDuration = shot.TriggerDuration(canContinue);
+                        (output.RightKick, output.RightHz) = shot.TriggerAt(shotElapsed, true, canContinue);
                     }
                 }
 

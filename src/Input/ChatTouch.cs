@@ -1,4 +1,4 @@
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal sealed class ChatTouch
 {
@@ -16,7 +16,7 @@ internal sealed class ChatTouch
     {
         if (!pad.Touching)
         {
-            char key = touching && !moved ? zone switch { 0 => '⌫', 2 => '↵', _ => '\0' } : '\0';
+            var key = touching && !moved ? zone switch { 0 => '⌫', 2 => '↵', _ => '\0' } : '\0';
             touching = false;
             return (key, 0);
         }
@@ -29,10 +29,11 @@ internal sealed class ChatTouch
             startY = lastY = pad.TouchY;
         }
 
-        moved |= Math.Abs(pad.TouchY - startY) >= 0.035f ||
-            (zone == 0 && pad.TouchX >= 1f / 3f) || (zone == 2 && pad.TouchX <= 2f / 3f);
-        if (zone != 1 || !moved) return default;
-        float scroll = pad.TouchY - lastY;
+        moved |= Math.Abs(pad.TouchY - startY) >= 0.035f || (zone == 0 && pad.TouchX >= 1f / 3f) || (zone == 2 && pad.TouchX <= 2f / 3f);
+        if (zone != 1 || !moved)
+            return default;
+
+        var scroll = pad.TouchY - lastY;
         lastY = pad.TouchY;
         return ('\0', scroll);
     }

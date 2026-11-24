@@ -1,12 +1,19 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal sealed class Hardware : IDisposable
 {
     [DllImport("gunsaw-dualsense-bt-audio")] private static extern int gunsaw_macos_lightbar(byte red, byte green, byte blue);
 
     private const float FeedbackInterval = 0.022f;
+    private readonly object effectGate = new();
+    private readonly Timer triggerTimer;
+    private long triggerStarted, triggerDeadline;
+    private (int Force, int Hertz, bool Detent) triggerKick;
+    private bool rightDetent;
     private IntPtr device;
     private float nextScan;
     private readonly Action<string> log;
@@ -15,14 +22,13 @@ internal sealed class Hardware : IDisposable
     private int? macLightbarStatus;
     private int? lastLeft;
     private (int Force, int Hertz, bool Detent)? lastRight;
-    private bool lastShotRumble;
+    private bool shotRumbleActive;
     private float nextFeedback;
     private bool rumbleErrorLogged;
     private bool improvedRumble;
     private (byte Low, byte High) lastRumble;
     private (byte Red, byte Green, byte Blue)? lightbar;
-    private bool lightbarReleased;
-    private float lightbarReleaseRetryAt;
+    private float? lightbarReleaseRetryAt;
     private bool routed;
     private readonly byte[] report = new byte[HidReport.Size];
     internal readonly Speaker Speaker;
@@ -36,6 +42,7 @@ internal sealed class Hardware : IDisposable
         Sdl.SDL_SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
         if (Sdl.SDL_InitSubSystem(Sdl.Controller) != 0) throw new InvalidOperationException(Sdl.Error);
         Sdl.SDL_GameControllerEventState(0);
+        triggerTimer = new Timer(_ => EndTriggerKick(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
     internal bool Poll(float now, out Pad pad)
@@ -44,7 +51,7 @@ internal sealed class Hardware : IDisposable
         Sdl.SDL_GameControllerUpdate();
         if (device != IntPtr.Zero && Sdl.SDL_GameControllerGetAttached(device) == 0)
         {
-            ClosePad();
+            lock (effectGate) ClosePad();
             Speaker.Close();
         }
         if (device == IntPtr.Zero && now >= nextScan)
@@ -82,53 +89,102 @@ internal sealed class Hardware : IDisposable
 
     private float Axis(int axis) => Math.Max(-1f, Sdl.SDL_GameControllerGetAxis(device, axis) / 32767f);
 
-    internal void PlayShot(int force, int hertz, float low, float high)
+    internal void PlayShot(int force, int hertz, float low, float high, float duration)
     {
-        if (device == IntPtr.Zero) return;
-        var right = (Force: force, Hertz: hertz, Detent: false);
-        var kick = force > 0 && (hertz <= 0 || lastRight != right);
-        var rumble = HidReport.EncodeRumble(low, high);
-        if (!kick && lastRumble == rumble) return;
+        lock (effectGate)
+        {
+            if (device == IntPtr.Zero) return;
+            var right = (Force: force, Hertz: hertz, Detent: false);
+            var kick = force > 0 && (hertz <= 0 || lastRight != right);
+            var rumble = HidReport.EncodeRumble(low, high);
+            SendEffects(lastRumble != rumble ? rumble : null, null, kick ? right : null, false);
 
-        HidReport.WriteEffects(report, improvedRumble, rumble, null, kick ? right : null, false);
-        if (Sdl.SDL_GameControllerSendEffect(device, report, report.Length) != 0) return;
-        lastRumble = rumble;
-        lastShotRumble = true;
-        if (kick) lastRight = right;
+            if (force > 0)
+            {
+                triggerKick = right;
+                rightDetent = false;
+                triggerStarted = Stopwatch.GetTimestamp();
+                SetTriggerDeadline(triggerStarted, duration);
+            }
+        }
     }
 
     internal void Send(Feedback effects, float now, bool shotThisFrame = false)
     {
-        if (device == IntPtr.Zero) return;
-        var hasUsbRoute = Speaker.HasUsbRoute;
-        if (!hasUsbRoute) routed = false;
-        var routeSpeaker = hasUsbRoute && !routed;
-        var leftChanged = lastLeft != effects.Left;
-        var right = (effects.RightKick, effects.RightHz, effects.RightDetent && effects.RightKick == 0);
-        var rightChanged = lastRight != right;
-        var rumble = HidReport.EncodeRumble(effects.Low, effects.High);
-        var rumbleChanged = lastRumble != rumble;
-        if (now < nextFeedback && !leftChanged && !rightChanged && !shotThisFrame &&
-            lastShotRumble == effects.ShotRumble && !(rumbleChanged && rumble == default)) return;
-
-        nextFeedback = now + FeedbackInterval;
-        if (!leftChanged && !rightChanged && !routeSpeaker && !rumbleChanged && !effects.ShotRumble)
+        lock (effectGate)
         {
-            lastShotRumble = false;
-            return;
-        }
+            if (device == IntPtr.Zero) return;
+            rightDetent = effects.RightDetent;
+            var timestamp = Stopwatch.GetTimestamp();
+            if (timestamp < triggerDeadline) SetTriggerDeadline(timestamp, effects.RightKickDuration);
+            var kicking = timestamp < triggerDeadline;
+            var right = kicking ? triggerKick : (0, 0, rightDetent);
+            var rightChanged = lastRight != right;
+            var leftChanged = lastLeft != effects.Left;
+            var hasUsbRoute = Speaker.HasUsbRoute;
+            if (!hasUsbRoute) routed = false;
+            var routeSpeaker = hasUsbRoute && !routed;
+            var rumble = HidReport.EncodeRumble(effects.Low, effects.High);
+            var sendRumble = rumble != lastRumble && (now >= nextFeedback || leftChanged || rightChanged ||
+                shotThisFrame || shotRumbleActive != effects.ShotRumble || rumble == default);
 
-        HidReport.WriteEffects(report, improvedRumble, rumbleChanged || rumble != default ? rumble : null,
-            leftChanged ? effects.Left : null, rightChanged ? right : null, routeSpeaker);
+            shotRumbleActive = effects.ShotRumble;
+            if (sendRumble) nextFeedback = now + FeedbackInterval;
+            SendEffects(sendRumble ? rumble : null, leftChanged ? effects.Left : null, rightChanged ? right : null, routeSpeaker);
+            if (!kicking && triggerDeadline != 0 && lastRight == right) CancelTriggerTimer();
+        }
+    }
+
+    private void SetTriggerDeadline(long now, float duration)
+    {
+        var deadline = triggerStarted + (long)Math.Round(duration * (double)Stopwatch.Frequency);
+        if (deadline == triggerDeadline) return;
+        triggerDeadline = deadline;
+        triggerTimer.Change(TriggerDelay(now), Timeout.Infinite);
+    }
+
+    private int TriggerDelay(long now) =>
+        (int)Math.Min(int.MaxValue, Math.Ceiling(Math.Max(0, triggerDeadline - now) * 1000.0 / Stopwatch.Frequency));
+
+    private void EndTriggerKick()
+    {
+        lock (effectGate)
+        {
+            if (triggerDeadline == 0) return;
+            var delay = TriggerDelay(Stopwatch.GetTimestamp());
+            if (delay > 0)
+            {
+                triggerTimer.Change(delay, Timeout.Infinite);
+                return;
+            }
+
+            var right = (0, 0, rightDetent);
+            if (lastRight != right) SendEffects(null, null, right, false);
+            if (lastRight == right) CancelTriggerTimer();
+            else triggerTimer.Change((int)Math.Ceiling(FeedbackInterval * 1000), Timeout.Infinite);
+        }
+    }
+
+    private void CancelTriggerTimer()
+    {
+        triggerDeadline = 0;
+        triggerTimer.Change(Timeout.Infinite, Timeout.Infinite);
+    }
+
+    private void SendEffects((byte Low, byte High)? rumble, int? left, (int Force, int Hertz, bool Detent)? right, bool usbSpeaker)
+    {
+        if (rumble == null && left == null && right == null && !usbSpeaker) return;
+
+        var motors = rumble ?? (lastRumble == default ? null : lastRumble);
+        HidReport.WriteEffects(report, improvedRumble, motors, left, right, usbSpeaker);
         if (Sdl.SDL_GameControllerSendEffect(device, report, report.Length) == 0)
         {
-            lastLeft = effects.Left;
-            lastRight = right;
-            lastRumble = rumble;
-            lastShotRumble = effects.ShotRumble;
-            routed |= routeSpeaker;
+            lastLeft = left ?? lastLeft;
+            lastRight = right ?? lastRight;
+            if (rumble.HasValue) lastRumble = rumble.Value;
+            routed |= usbSpeaker;
         }
-        else if (!rumbleErrorLogged && rumble != default)
+        else if (!rumbleErrorLogged && motors.HasValue && motors.Value != default)
         {
             rumbleErrorLogged = true;
             log($"DualSense rumble report failed: {Sdl.Error}");
@@ -143,23 +199,17 @@ internal sealed class Hardware : IDisposable
             lightbar = null;
             return;
         }
-        if (!lightbarReleased || (lightbarReleaseRetryAt > 0 && now >= lightbarReleaseRetryAt))
-        {
-            HidReport.WriteLightbar(report, true);
-            if (Sdl.SDL_GameControllerSendEffect(device, report, report.Length) == 0)
-            {
-                lightbarReleaseRetryAt = lightbarReleased ? 0 : now + 4f;
-                lightbarReleased = true;
-                lightbar = null;
-            }
-            return;
-        }
-
+        var release = lightbarReleaseRetryAt == null || now >= lightbarReleaseRetryAt;
         var color = (red, green, blue);
-        if (lightbar == color) return;
-        HidReport.WriteLightbar(report, false, red, green, blue);
-        if (Sdl.SDL_GameControllerSendEffect(device, report, report.Length) == 0)
-            lightbar = color;
+        if (!release && lightbar == color) return;
+
+        lock (effectGate)
+        {
+            HidReport.WriteLightbar(report, release, red, green, blue);
+            if (Sdl.SDL_GameControllerSendEffect(device, report, report.Length) != 0) return;
+        }
+        if (release) lightbarReleaseRetryAt = lightbarReleaseRetryAt == null ? now + 4f : float.PositiveInfinity;
+        lightbar = release ? null : color;
     }
 
     private bool TrySetMacLightbar(byte red, byte green, byte blue, float now)
@@ -193,17 +243,18 @@ internal sealed class Hardware : IDisposable
     private void ClosePad()
     {
         if (device == IntPtr.Zero) return;
+        CancelTriggerTimer();
         Sdl.SDL_GameControllerClose(device);
         device = IntPtr.Zero;
         lastLeft = null;
         lastRight = null;
-        lastShotRumble = false;
+        rightDetent = false;
+        shotRumbleActive = false;
         nextFeedback = 0;
         rumbleErrorLogged = false;
         lastRumble = default;
         lightbar = null;
-        lightbarReleased = false;
-        lightbarReleaseRetryAt = 0;
+        lightbarReleaseRetryAt = null;
         nextMacLightbarAttempt = 0;
         macLightbarStatus = null;
         routed = false;
@@ -211,8 +262,12 @@ internal sealed class Hardware : IDisposable
 
     public void Dispose()
     {
-        Send(default, float.PositiveInfinity);
-        ClosePad();
+        lock (effectGate)
+        {
+            Send(default, float.PositiveInfinity);
+            ClosePad();
+            triggerTimer.Dispose();
+        }
         Speaker.Dispose();
         Sdl.SDL_QuitSubSystem(Sdl.Controller);
     }

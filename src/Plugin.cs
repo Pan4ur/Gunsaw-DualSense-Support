@@ -3,9 +3,9 @@ using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
-[BepInPlugin(Id, "GunsawDualSenceSupport", "1.1.17")]
+[BepInPlugin(Id, "GunsawDualSenseSupport", "0.0.1")]
 [BepInDependency(GunsawMultiplayerPlugin.PluginGuid)]
 [DefaultExecutionOrder(-1000)]
 public sealed class Plugin : BaseUnityPlugin
@@ -14,8 +14,8 @@ public sealed class Plugin : BaseUnityPlugin
     internal static Plugin? Instance;
     internal readonly Effects Effects = new();
     private readonly Gestures gestures = new();
-    private readonly PadMenu menu = new();
     private readonly PadKeyboard keyboard = new();
+    private PadMenu menu = null!;
     private readonly ChatTouch chatTouch = new();
     private PadOverlay overlay = null!;
     private Func<Button, bool> pressed = null!;
@@ -28,12 +28,13 @@ public sealed class Plugin : BaseUnityPlugin
     private Harmony? harmony;
     private Pad pad, previous;
     private int sampledFrame = -1;
-    private bool connected, usable, play, chatOpen, wasChatOpen, aimActive, pauseAllowed;
+    private bool connected, usable, play, chatOpen, aimActive, pauseAllowed;
     private Vector2 direction, physicalMouse;
     private bool swapTriggerHeld;
     private Rigidbody2D? levitationTarget;
     private Vector2 levitationStartPosition;
     private Vector3 levitationStartPointer;
+    private bool levitationMoved;
     private float nextLightbar;
     private bool previousBackground;
 
@@ -41,6 +42,7 @@ public sealed class Plugin : BaseUnityPlugin
     {
         if (Application.isBatchMode) return;
         overlay = new PadOverlay(transform);
+        menu = new PadMenu(keyboard);
         pressed = Pressed;
         aim = Config.Bind("Aim", "WindowPercent", 70f, Range("The maximum tilt of the right stick, expressed as a percentage of half the window."));
         scopedAim = Config.Bind("Aim", "ScopedWindowPercent", 95f, Range("Tilt for guns with farAim."));
@@ -87,6 +89,7 @@ public sealed class Plugin : BaseUnityPlugin
         var now = Time.unscaledTime;
         previous = pad;
         var wasConnected = connected;
+        var wasChatOpen = usable && chatOpen;
         connected = emulator != null ? emulator.Poll(now, out pad) : hardware != null && hardware.Poll(now, out pad);
         usable = connected && (emulator != null || Application.isFocused);
         if (!usable) pad = default;
@@ -118,13 +121,11 @@ public sealed class Plugin : BaseUnityPlugin
             direction = right.normalized * aimScale;
         }
         
-        if (chatOpen && !wasChatOpen)
+        if (usable && chatOpen && !wasChatOpen)
         {
             keyboard.Reset();
             chatTouch.Reset(pad.Touching);
         }
-        
-        wasChatOpen = usable && chatOpen;
     }
 
     internal void OnShot(WeaponScript weapon)
@@ -134,18 +135,19 @@ public sealed class Plugin : BaseUnityPlugin
             return;
         
         Sample();
-        var (force, hertz, low, high) = Effects.Shot(weapon, play && pad.Firing);
+        var (force, hertz, low, high, duration) = Effects.Shot(weapon, play && pad.Firing);
         
-        if (play) hardware?.PlayShot(force, hertz, low, high);
+        if (play) hardware?.PlayShot(force, hertz, low, high, duration);
     }
 
     private void LateUpdate()
     {
         if (Instance != this) return;
-        if (sampledFrame != Time.frameCount) Sample();
+        Sample();
         menu.Tick(pad, pressed, usable && !chatOpen);
         var now = Time.unscaledTime;
         var player = PlayerScript.player;
+        var body = player != null ? player.bodyScript : null;
         if (!usable) overlay.Hide();
         else
         {
@@ -153,9 +155,9 @@ public sealed class Plugin : BaseUnityPlugin
             if (chatOpen) keyboard.Show(overlay, false, true);
             else menu.Show(overlay);
         }
-        var active = connected && play && GameManager.main != null && !GameManager.main.paused;
-        var output = Effects.Tick(player, now, connected ? hardware?.Speaker : null, active, pad.Firing, speakerVolume.Value / (float)MaxSpeakerVolume, pad.R2);
-        if (active && UsesLevitationTrigger(player) && player!.bodyScript != null && player.bodyScript.isAlive && player.levit != null)
+        var active = play && GameManager.main != null && !GameManager.main.paused;
+        var output = Effects.Tick(body, now, connected ? hardware?.Speaker : null, active, pad.Firing, speakerVolume.Value / (float)MaxSpeakerVolume, pad.R2);
+        if (active && body != null && body.isAlive && UsesLevitationTrigger(player) && player!.levit != null)
         {
             var target = player.levit.currentlyLevitating;
             if (target != null) output.Left = Trigger.LevitationResistance(target.mass);
@@ -165,17 +167,17 @@ public sealed class Plugin : BaseUnityPlugin
         if (hardware != null && connected && now >= nextLightbar)
         {
             nextLightbar = now + 0.1f;
-            var color = ScarfLightColor(player != null ? player.bodyScript : null, now);
+            var color = ScarfLightColor(body, now);
             hardware.SetLightbar(color.r, color.g, color.b, now);
         }
 
         if (emulator != null)
         {
             var state = chatOpen ? "chat" : active ? "play" : "menu";
-            if (player != null && player.bodyScript != null)
+            if (body != null)
             {
-                var body = player.bodyScript;
-                state += FormattableString.Invariant($" hp={body.health:F0} slot={body.currentWeapon} x={body.transform.position.x:F1} aim={Pointer().x:F0},{Pointer().y:F0}");
+                var pointer = Pointer();
+                state += FormattableString.Invariant($" hp={body.health:F0} slot={body.currentWeapon} x={body.transform.position.x:F1} aim={pointer.x:F0},{pointer.y:F0}");
             }
             if (output.RightKick > 0) state += $" r2kick={output.RightKick} r2hz={output.RightHz}";
             emulator.Send(now, output, state, shotThisFrame);
@@ -203,30 +205,25 @@ public sealed class Plugin : BaseUnityPlugin
 
     internal void AddControllerSettings(MainMenuManager owner)
     {
-        if (owner.startText == null)
-            return;
-        
-        if (owner.loadSlider != null)
-        {
-            AddPercentSlider(owner.loadSlider, owner.startText, "Left stick dead zone", leftDeadZone, -48, MaxDeadZone);
-            AddPercentSlider(owner.loadSlider, owner.startText, "Right stick dead zone", rightDeadZone, -93, MaxDeadZone);
-        }
+        if (owner.startText == null || owner.loadSlider == null) return;
+        AddPercentSlider(owner.loadSlider, owner.startText, "Left stick dead zone", leftDeadZone, -48);
+        AddPercentSlider(owner.loadSlider, owner.startText, "Right stick dead zone", rightDeadZone, -93);
     }
 
     internal void AddPauseControllerSettings(GameManager owner)
     {
         if (owner.musicVolSlider != null && owner.pauseMenuText != null)
-            AddPercentSlider(owner.musicVolSlider, owner.pauseMenuText, "Controller speaker", speakerVolume, -32, MaxSpeakerVolume);
+            AddPercentSlider(owner.musicVolSlider, owner.pauseMenuText, "Controller speaker", speakerVolume, -32);
     }
 
-    private static void AddPercentSlider(UnityEngine.UI.Slider source, TMPro.TMP_Text template, string title, ConfigEntry<int> setting, float offset, int maximum)
+    private static void AddPercentSlider(UnityEngine.UI.Slider source, TMPro.TMP_Text template, string title, ConfigEntry<int> setting, float offset)
     {
         var parent = source.transform.parent;
         var slider = Instantiate(source, parent, false);
         slider.name = title;
         slider.onValueChanged = new UnityEngine.UI.Slider.SliderEvent();
         slider.minValue = 0;
-        slider.maxValue = maximum;
+        slider.maxValue = ((AcceptableValueRange<int>)setting.Description.AcceptableValues).MaxValue;
         slider.wholeNumbers = true;
         slider.SetValueWithoutNotify(setting.Value);
         var rect = (RectTransform)slider.transform;
@@ -299,10 +296,8 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static bool Slow(Pad state) => state.Has(Button.Circle) || ((state.MoveX != 0 || state.MoveY != 0) && new Vector2(state.LX, state.LY).sqrMagnitude < 0.25f);
 
-    private static bool PlayerKey(KeyCode key, Pad state, bool pickup, bool pickupReader)
+    private static bool PlayerKey(PlayerScript player, KeyCode key, Pad state, bool pickup, bool pickupReader)
     {
-        var player = PlayerScript.player;
-        if (player == null || player.keys == null || key == KeyCode.None) return false;
         var keys = player.keys;
         var walking = Slow(state) && !pickup;
         return (key == keys["MoveLeft"] && state.MoveX < 0) ||
@@ -325,9 +320,12 @@ public sealed class Plugin : BaseUnityPlugin
 
     internal bool GameplayKey(KeyCode key, int phase, bool pickupReader)
     {
-        var was = PlayerKey(key, previous, false, pickupReader);
-        var isHeld = play && PlayerKey(key, pad, gestures.Pickup, pickupReader);
-        return phase == 0 ? isHeld : phase == 1 ? isHeld && !was : was && !isHeld;
+        var player = PlayerScript.player;
+        if (player == null || player.keys == null || key == KeyCode.None) return false;
+        var isHeld = play && PlayerKey(player, key, pad, gestures.Pickup, pickupReader);
+        if (phase == 0) return isHeld;
+        var wasHeld = PlayerKey(player, key, previous, false, pickupReader);
+        return phase == 1 ? isHeld && !wasHeld : wasHeld && !isHeld;
     }
 
     internal float Vertical() => play && pad.MoveY != 0 ? pad.MoveY : Input.GetAxisRaw("Vertical");
@@ -353,6 +351,7 @@ public sealed class Plugin : BaseUnityPlugin
         if (player == null || levitator != player.levit) return;
         levitationTarget = UsesLevitationTrigger(player) ? levitator.currentlyLevitating : null;
         if (levitationTarget == null) return;
+        levitationMoved = false;
         levitationStartPointer = Pointer();
         levitationStartPosition = levitationTarget.transform.position;
     }
@@ -370,11 +369,12 @@ public sealed class Plugin : BaseUnityPlugin
         var pointer = Pointer();
         if (pointer == levitationStartPointer)
         {
-            levitator.point = levitationTarget.transform.position;
+            levitator.point = levitationMoved ? levitationStartPosition : (Vector2)levitationTarget.transform.position;
             return;
         }
         var camera = Camera.main;
         if (camera == null) return;
+        levitationMoved = true;
         Vector2 offset = camera.ScreenToWorldPoint(pointer) - camera.ScreenToWorldPoint(levitationStartPointer);
         levitator.point = levitationStartPosition + offset;
     }
@@ -399,7 +399,7 @@ public sealed class Plugin : BaseUnityPlugin
         var step = gestures.WeaponStep;
         if (step == 0 || body.weapon == null) return;
         var count = body.weapons.Count;
-        var current = body.unarmed || body.currentWeapon < 0 ? -1 : body.currentWeapon;
+        var current = body.unarmed ? -1 : body.currentWeapon;
         var next = current;
         if (next < 0) next = step > 0 ? count - 1 : 0;
         for (var offset = 0; offset < count; offset++)
@@ -431,10 +431,17 @@ public sealed class Plugin : BaseUnityPlugin
             }
         }
         var at = hud.ChatCaretPosition;
-        if (touch.Key == '\0' && Pressed(Button.L1)) { hud.SetChatCaretPosition(at - 1); return; }
-        if (touch.Key == '\0' && Pressed(Button.R1)) { hud.SetChatCaretPosition(at + 1); return; }
-
-        var key = touch.Key != '\0' ? touch.Key : keyboard.Tick(pad, pressed, true);
+        var key = touch.Key;
+        if (key == '\0')
+        {
+            var move = Pressed(Button.L1) ? -1 : Pressed(Button.R1) ? 1 : 0;
+            if (move != 0)
+            {
+                hud.SetChatCaretPosition(at + move);
+                return;
+            }
+            key = keyboard.Tick(pad, pressed, true);
+        }
         if (key == '↵') hud.Submit();
         else if (key == '⌫' && at > 0)
         {

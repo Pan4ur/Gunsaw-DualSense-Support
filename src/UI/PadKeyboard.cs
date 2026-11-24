@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal sealed class PadKeyboard
 {

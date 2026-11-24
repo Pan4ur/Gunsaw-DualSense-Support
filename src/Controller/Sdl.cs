@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct SdlAudioSpec

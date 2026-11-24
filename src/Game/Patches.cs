@@ -4,7 +4,7 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 [HarmonyPatch]
 internal static class InputPatch

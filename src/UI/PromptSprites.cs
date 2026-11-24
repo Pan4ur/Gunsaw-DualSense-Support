@@ -1,13 +1,13 @@
 using TMPro;
 using UnityEngine;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal static class PromptTextures
 {
     internal static Texture2D Load(string name, FilterMode filter)
     {
-        using var resource = typeof(PromptTextures).Assembly.GetManifestResourceStream($"GunsawDualSenceSupport.Prompts.{name}.png")
+        using var resource = typeof(PromptTextures).Assembly.GetManifestResourceStream($"GunsawDualSenseSupport.Prompts.{name}.png")
             ?? throw new InvalidOperationException($"Missing prompt texture: {name}");
         
         using var data = new MemoryStream();

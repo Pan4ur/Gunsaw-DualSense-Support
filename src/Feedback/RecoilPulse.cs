@@ -1,4 +1,4 @@
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal readonly struct RecoilPulse
 {
@@ -24,14 +24,12 @@ internal readonly struct RecoilPulse
         return previous > 0 ? previous + (observed - previous) * 0.2f : observed;
     }
 
-    internal (int Force, int Hertz) TriggerAt(float elapsed, bool held, bool canContinue)
-    {
-        if (!held || elapsed < 0) return default;
-        var timeout = hertz == 0 ? triggerDuration : canContinue
-            ? shotInterval + Math.Min(0.018f, shotInterval * 0.2f)
-            : Math.Min(0.035f, shotInterval * 0.6f);
-        return elapsed < timeout ? (triggerForce, hertz) : default;
-    }
+    internal float TriggerDuration(bool canContinue) => hertz == 0 ? triggerDuration : canContinue
+        ? shotInterval + Math.Min(0.018f, shotInterval * 0.2f)
+        : Math.Min(0.035f, shotInterval * 0.6f);
+
+    internal (int Force, int Hertz) TriggerAt(float elapsed, bool held, bool canContinue) =>
+        held && elapsed >= 0 && elapsed < TriggerDuration(canContinue) ? (triggerForce, hertz) : default;
 
     internal (float Low, float High) At(float elapsed, bool continuesBurst = false)
     {

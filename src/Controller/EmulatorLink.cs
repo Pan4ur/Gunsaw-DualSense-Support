@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal sealed class EmulatorLink : IDisposable
 {
@@ -47,7 +47,7 @@ internal sealed class EmulatorLink : IDisposable
         return alive;
     }
 
-    internal void Send(float now, Feedback effects, string state, bool shot = false)
+    internal void Send(float now, Feedback effects, string state, bool shot)
     {
         if (peer == null || (!shot && now < nextSend)) return;
         nextSend = now + 0.04f;

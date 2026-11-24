@@ -1,4 +1,4 @@
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal enum UiDirection { None, Left, Right, Up, Down }
 

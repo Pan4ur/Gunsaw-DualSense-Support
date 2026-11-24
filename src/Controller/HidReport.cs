@@ -1,4 +1,4 @@
-namespace GunsawDualSenceSupport;
+namespace GunsawDualSenseSupport;
 
 internal static class HidReport
 {
@@ -15,8 +15,7 @@ internal static class HidReport
     internal static (byte Low, byte High) EncodeRumble(float low, float high) =>
         ((byte)Math.Round(low * byte.MaxValue), (byte)Math.Round(high * byte.MaxValue));
 
-    internal static void WriteEffects(byte[] report, bool improved, (byte Low, byte High)? rumble,
-        int? left, (int Force, int Hertz, bool Detent)? right, bool usbSpeaker)
+    internal static void WriteEffects(byte[] report, bool improved, (byte Low, byte High)? rumble, int? left, (int Force, int Hertz, bool Detent)? right, bool usbSpeaker)
     {
         Array.Clear(report, 0, report.Length);
         if (rumble is { } motors)

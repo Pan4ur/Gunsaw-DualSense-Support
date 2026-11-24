@@ -28,8 +28,8 @@
     <Reference Include="UnityEngine.UIModule" HintPath="$(ManagedDirectory)/UnityEngine.UIModule.dll" Private="false" />
     <Reference Include="Unity.TextMeshPro" HintPath="$(ManagedDirectory)/Unity.TextMeshPro.dll" Private="false" />
     <Reference Include="UnityEngine.IMGUIModule" HintPath="$(ManagedDirectory)/UnityEngine.IMGUIModule.dll" Private="false" />
-    <None Update="GunsawDualSenceSupport.dll.config" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="GunsawDualSenseSupport.dll.config" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Native/*" CopyToOutputDirectory="PreserveNewest" TargetPath="%(Filename)%(Extension)" />
-    <EmbeddedResource Include="Textures/*.png" LogicalName="GunsawDualSenceSupport.Prompts.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Textures/*.png" LogicalName="GunsawDualSenseSupport.Prompts.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
