@@ -39,6 +39,12 @@ jobs:
             exit 1
           }
           unzip -q "$archive" -d "$RUNNER_TEMP/gunsaw"
+          multiplayer="$RUNNER_TEMP/gunsaw/BepInEx/plugins/GunsawMultiplayer.dll"
+          if [[ ! -s "$multiplayer" ]]; then
+            mkdir -p "$(dirname "$multiplayer")"
+            curl -fsSL --retry 3 --output "$multiplayer" \
+              https://github.com/Pan4ur/Gunsaw-Multiplayer-Mod/releases/download/nightly/GunsawMultiplayer.dll
+          fi
 
       - name: Build and package
         shell: bash
