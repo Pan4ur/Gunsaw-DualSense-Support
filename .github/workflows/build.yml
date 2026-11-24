@@ -1,0 +1,97 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download build dependencies
+        shell: bash
+        env:
+          DEPENDENCIES_URL: ${{ secrets.GUNSAW_BUILD_DEPENDENCIES_URL }}
+        run: |
+          if [[ -z "$DEPENDENCIES_URL" ]]; then
+            echo 'Set the GUNSAW_BUILD_DEPENDENCIES_URL Actions secret.' >&2
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/gunsaw-build-dependencies.zip"
+          curl --fail --silent --location --retry 3 --proto '=https' --proto-redir '=https' --output "$archive" -- "$DEPENDENCIES_URL" || {
+            echo 'Could not download Gunsaw build dependencies.' >&2
+            exit 1
+          }
+          unzip -q "$archive" -d "$RUNNER_TEMP/gunsaw"
+
+      - name: Build and package
+        shell: bash
+        run: |
+          dotnet build GunsawDualSenseSupport.csproj --configuration Release "-p:GameDirectory=$RUNNER_TEMP/gunsaw" -warnaserror:MSB3245
+          python3 package.py
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: GunsawDualSenseSupport-${{ github.sha }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: GunsawDualSenseSupport-${{ github.sha }}
+          path: dist
+
+      - name: Publish nightly prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          head_sha=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$head_sha" != "$GITHUB_SHA" ]]; then
+            echo 'Skipping this release because main has advanced.'
+            exit 0
+          fi
+
+          notes="$RUNNER_TEMP/nightly-notes.md"
+          printf 'Commit: %s\n\nBuild: %s/%s/actions/runs/%s\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GH_REPO" "$GITHUB_RUN_ID" > "$notes"
+          if status=$(gh release view nightly --json isPrerelease,isImmutable --jq '.isPrerelease and (.isImmutable | not)'); then
+            if [[ "$status" != true ]]; then
+              echo 'The existing nightly release must be a mutable prerelease.' >&2
+              exit 1
+            fi
+          else
+            gh release create nightly --draft --prerelease --latest=false --title 'Nightly' --notes-file "$notes"
+          fi
+
+          gh release upload nightly dist/*.zip --clobber
+          if gh api "repos/$GH_REPO/git/ref/tags/nightly" --silent; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/nightly" -f sha="$GITHUB_SHA" -F force=true --silent
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" -f ref=refs/tags/nightly -f sha="$GITHUB_SHA" --silent
+          fi
+          gh release edit nightly --draft=false --latest=false --notes-file "$notes"
