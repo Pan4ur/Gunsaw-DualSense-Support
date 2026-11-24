@@ -1,0 +1,15 @@
+--- a/src/joystick/hidapi/SDL_hidapijoystick.c
++++ b/src/joystick/hidapi/SDL_hidapijoystick.c
+@@ -1242,6 +1242,12 @@ void HIDAPI_UpdateDevices(void)
+             if (device->parent) {
+                 continue;
+             }
++#if defined(__MACOSX__) && defined(SDL_JOYSTICK_HIDAPI_PS5)
++            if (device->driver == &SDL_HIDAPI_DriverPS5 && device->is_bluetooth) {
++                device->driver->UpdateDevice(device);
++                continue;
++            }
++#endif
+             if (device->driver) {
+                 if (SDL_TryLockMutex(device->dev_lock) == 0) {
+                     device->updating = SDL_TRUE;

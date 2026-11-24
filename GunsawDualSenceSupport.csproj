@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GameDirectory Condition="'$(GameDirectory)' == ''">$(HOME)/Desktop/Gunsaw</GameDirectory>
+    <ManagedDirectory Condition="'$(ManagedDirectory)' == '' and Exists('$(GameDirectory)/Gunsaw.app')">$(GameDirectory)/Gunsaw.app/Contents/Resources/Data/Managed</ManagedDirectory>
+    <ManagedDirectory Condition="'$(ManagedDirectory)' == ''">$(GameDirectory)/Gunsaw_Data/Managed</ManagedDirectory>
+    <MultiplayerAssembly Condition="'$(MultiplayerAssembly)' == ''">$(GameDirectory)/BepInEx/plugins/GunsawMultiplayer.dll</MultiplayerAssembly>
+    <CoreDirectory>$(GameDirectory)/BepInEx/core</CoreDirectory>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Checks/**/*.cs" />
+    <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.3" PrivateAssets="all" />
+    <Reference Include="Assembly-CSharp" HintPath="$(ManagedDirectory)/Assembly-CSharp.dll" Publicize="true" Private="false" />
+    <Reference Include="GunsawMultiplayer" HintPath="$(MultiplayerAssembly)" Publicize="true" Private="false" />
+    <Reference Include="BepInEx" HintPath="$(CoreDirectory)/BepInEx.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(CoreDirectory)/0Harmony.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(ManagedDirectory)/UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(ManagedDirectory)/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.ImageConversionModule" HintPath="$(ManagedDirectory)/UnityEngine.ImageConversionModule.dll" Private="false" />
+    <Reference Include="UnityEngine.InputLegacyModule" HintPath="$(ManagedDirectory)/UnityEngine.InputLegacyModule.dll" Private="false" />
+    <Reference Include="UnityEngine.Physics2DModule" HintPath="$(ManagedDirectory)/UnityEngine.Physics2DModule.dll" Private="false" />
+    <Reference Include="UnityEngine.AudioModule" HintPath="$(ManagedDirectory)/UnityEngine.AudioModule.dll" Private="false" />
+    <Reference Include="UnityEngine.UI" HintPath="$(ManagedDirectory)/UnityEngine.UI.dll" Private="false" />
+    <Reference Include="UnityEngine.UIModule" HintPath="$(ManagedDirectory)/UnityEngine.UIModule.dll" Private="false" />
+    <Reference Include="Unity.TextMeshPro" HintPath="$(ManagedDirectory)/Unity.TextMeshPro.dll" Private="false" />
+    <Reference Include="UnityEngine.IMGUIModule" HintPath="$(ManagedDirectory)/UnityEngine.IMGUIModule.dll" Private="false" />
+    <None Update="GunsawDualSenceSupport.dll.config" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Native/*" CopyToOutputDirectory="PreserveNewest" TargetPath="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Textures/*.png" LogicalName="GunsawDualSenceSupport.Prompts.%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
