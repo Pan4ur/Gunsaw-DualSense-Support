@@ -28,6 +28,7 @@ internal static class Sdl
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern int SDL_NumJoysticks();
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern int SDL_GameControllerTypeForIndex(int index);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr SDL_GameControllerOpen(int index);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr SDL_GameControllerPath(IntPtr pad);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern int SDL_GameControllerGetAttached(IntPtr pad);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern void SDL_GameControllerClose(IntPtr pad);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern short SDL_GameControllerGetAxis(IntPtr pad, int axis);

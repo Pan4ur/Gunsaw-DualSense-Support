@@ -3,10 +3,9 @@ using UnityEngine;
 
 namespace GunsawDualSenseSupport;
 
-internal sealed class Speaker : IDisposable
+internal sealed class Speaker(Action<string> log, Func<IntPtr> controller) : IDisposable
 {
     private const int Rate = 48000;
-    private readonly Action<string> log;
     private BluetoothSpeaker? bluetooth;
     private bool reportedFailure;
     private uint device;
@@ -19,8 +18,6 @@ internal sealed class Speaker : IDisposable
     private int engineRate, locatorRate;
     private int heartbeatPosition = -1;
     private float[] buffer = [];
-
-    internal Speaker(Action<string> log) => this.log = log;
 
     internal bool HasUsbRoute => device != 0;
     internal bool HasBluetoothRoute => bluetooth != null;
@@ -184,7 +181,7 @@ internal sealed class Speaker : IDisposable
             return;
         }
 
-        bluetooth = BluetoothSpeaker.Open(log, out var problem);
+        bluetooth = BluetoothSpeaker.Open(controller(), log, out var problem);
         if (bluetooth != null)
         {
             channels = 1;

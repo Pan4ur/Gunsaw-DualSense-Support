@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -14,6 +15,7 @@ internal sealed class BluetoothSpeaker : IDisposable
     internal const int Frames = 1024;
     private const string MacSystem = "/usr/lib/libSystem.B.dylib";
     private const string Library = "gunsaw-dualsense-bt-audio";
+    private static readonly bool Windows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
     private static int inUse;
     private readonly object gate = new();
     private readonly float[][] queue = [new float[Frames], new float[Frames], new float[Frames], new float[Frames]];
@@ -36,6 +38,8 @@ internal sealed class BluetoothSpeaker : IDisposable
     [DllImport(MacSystem)] private static extern int mach_wait_until(ulong deadline);
 
     [DllImport(Library)] private static extern IntPtr gunsaw_bt_open(out int result);
+    [DllImport(Library)] private static extern IntPtr gunsaw_bt_open_windows(IntPtr path, out int result);
+    [DllImport(Library)] private static extern void gunsaw_bt_wait(IntPtr handle, long ticks);
     [DllImport(Library)] private static extern int gunsaw_bt_set_sender_priority(uint period);
     [DllImport(Library)] private static extern int gunsaw_bt_send(IntPtr handle, float[] samples);
     [DllImport(Library)] private static extern int gunsaw_bt_lightbar(IntPtr handle, byte red, byte green, byte blue);
@@ -48,17 +52,17 @@ internal sealed class BluetoothSpeaker : IDisposable
         new Thread(Play) { IsBackground = true, Name = "Gunsaw DualSense audio" }.Start();
     }
 
-    internal static BluetoothSpeaker? Open(Action<string> log, out string? problem)
+    internal static BluetoothSpeaker? Open(IntPtr controller, Action<string> log, out string? problem)
     {
         problem = null;
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || Interlocked.CompareExchange(ref inUse, 1, 0) != 0)
+        if ((!Windows && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) || Interlocked.CompareExchange(ref inUse, 1, 0) != 0)
             return null;
 
         IntPtr handle = IntPtr.Zero;
         bool started = false;
         try
         {
-            handle = gunsaw_bt_open(out int result);
+            handle = Windows ? gunsaw_bt_open_windows(Sdl.SDL_GameControllerPath(controller), out int result) : gunsaw_bt_open(out result);
             if (handle != IntPtr.Zero)
             {
                 var speaker = new BluetoothSpeaker(handle, log);
@@ -122,6 +126,7 @@ internal sealed class BluetoothSpeaker : IDisposable
 
     internal bool SetLightbar(byte red, byte green, byte blue, float now)
     {
+        if (Windows) return false;
         lock (gate)
         {
             if (stopping || failed || lightbarUnavailable || (lightbarRejected && now < nextLightbarRefresh)) return false;
@@ -176,21 +181,44 @@ internal sealed class BluetoothSpeaker : IDisposable
         return now > next && now - next > interval ? now : next;
     }
 
+    private static ulong Timestamp() => Windows ? (ulong)Stopwatch.GetTimestamp() : mach_absolute_time();
+
+    private void WaitUntil(ulong deadline)
+    {
+        if (!Windows)
+        {
+            mach_wait_until(deadline);
+            return;
+        }
+        var now = Timestamp();
+        if (deadline > now)
+            gunsaw_bt_wait(handle, (long)Math.Ceiling((deadline - now) * (10_000_000d / Stopwatch.Frequency)));
+    }
+
     private void Play()
     {
         try
         {
-            mach_timebase_info(out var timebase);
-            var interval = 1_000_000_000UL * Frames * timebase.Denominator / (48000UL * timebase.Numerator);
-            millisecondsPerTick = timebase.Numerator / (1_000_000.0 * timebase.Denominator);
+            ulong interval;
+            if (Windows)
+            {
+                interval = (ulong)Stopwatch.Frequency * Frames / 48000;
+                millisecondsPerTick = 1000d / Stopwatch.Frequency;
+            }
+            else
+            {
+                mach_timebase_info(out var timebase);
+                interval = 1_000_000_000UL * Frames * timebase.Denominator / (48000UL * timebase.Numerator);
+                millisecondsPerTick = timebase.Numerator / (1_000_000.0 * timebase.Denominator);
+            }
             gunsaw_bt_set_sender_priority((uint)interval);
-            var due = mach_absolute_time();
+            var due = Timestamp();
             ulong lastWrite = 0;
             var samples = new float[Frames];
             while (true)
             {
-                due = NextDeadline(due, mach_absolute_time(), interval);
-                mach_wait_until(due);
+                due = NextDeadline(due, Timestamp(), interval);
+                WaitUntil(due);
 
                 (byte Red, byte Green, byte Blue)? pendingLightbar;
                 bool hasAudio;
@@ -199,7 +227,7 @@ internal sealed class BluetoothSpeaker : IDisposable
                     while (count == 0 && !lightbarPending && !stopping)
                     {
                         Monitor.Wait(gate);
-                        due = mach_absolute_time();
+                        due = Timestamp();
                         lastWrite = 0;
                     }
                     if (stopping) return;
@@ -218,9 +246,9 @@ internal sealed class BluetoothSpeaker : IDisposable
                 if (hasAudio && volume != 0)
                 {
                     for (var i = 0; i < Frames; i++) samples[i] *= volume;
-                    var writeAt = mach_absolute_time();
+                    var writeAt = Timestamp();
                     var result = gunsaw_bt_send(handle, samples);
-                    var writeDuration = mach_absolute_time() - writeAt;
+                    var writeDuration = Timestamp() - writeAt;
                     lock (gate)
                     {
                         if (stopping) return;

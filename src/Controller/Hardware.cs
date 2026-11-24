@@ -37,7 +37,7 @@ internal sealed class Hardware : IDisposable
     internal Hardware(Action<string> audioLog)
     {
         log = audioLog;
-        Speaker = new Speaker(audioLog);
+        Speaker = new Speaker(audioLog, () => device);
         Sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_PS5", "1");
         Sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_PS5_RUMBLE", "1");
         Sdl.SDL_SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
