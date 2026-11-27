@@ -85,7 +85,7 @@ Touchpad:
 3. Start the unmodified game once, then close it
 4. Install [BepInEx](https://github.com/bepinex/bepinex/releases) into the game folder — the folder that contains the `Gunsaw.exe`
 5. Download zip for your platform from [releases](https://github.com/Pan4ur/Gunsaw-Dualsense-Support/releases)
-6. Unpack the zip to ```<Gunsaw folder>\BepInEx\plugins\``
+6. Unpack the zip to ```<Gunsaw folder>\BepInEx\plugins\```
 7. Connect DualSence via Bluetooth or USB and enjoy
 
 On macOS, you will need to allow execution in your privacy settings
